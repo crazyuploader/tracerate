@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tracerate"
+version = "0.1.0"
+description = "A no-nonsense CLI internet speed tester"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx",
+    "typer",
+    "rich",
+]
+
+[project.scripts]
+tracerate = "tracerate.cli:app"
