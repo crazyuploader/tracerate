@@ -1,89 +1,43 @@
-def analyze(results: list[dict]) -> dict:
+def analyze(result: dict, bufferbloat: dict | None = None) -> dict:
     """
-    Takes raw test results and computes summary statistics.
+    Takes a single test result (+ optional bufferbloat data)
+    and returns a summary with averages and a verdict string.
 
-    We separate computation from diagnosis intentionally,
-    easier to test and reason about each part independently.
-
-    Returns a dict with averages, variance, and the verdict string.
+    Verdict priority: worst-condition first, healthy last.
     """
 
-    download_speeds = [
-        r["download_mbps"]
-        for r in results
-        if r["download_mbps"] is not None and r["download_mbps"] > 0
-    ]
-
-    ping_times = [
-        r["ping_ms"]
-        for r in results
-        if r["ping_ms"] is not None and r["ping_ms"] > 0
-    ]
-
-    upload_speeds = [
-        r["upload_mbps"]
-        for r in results
-        if r["upload_mbps"] is not None and r["upload_mbps"] > 0
-    ]
-
-
-    avg_download = (
-        round(sum(download_speeds) / len(download_speeds), 2)
-        if download_speeds else 0.0
-    )
-
-    avg_ping = (
-        round(sum(ping_times) / len(ping_times), 2)
-        if ping_times else 0.0
-    )
-
-    avg_upload = (
-        round(sum(upload_speeds) / len(upload_speeds), 2)
-        if upload_speeds else None
-    )
-
-    variance_pct = 0.0
-
-    if len(download_speeds) > 1 and avg_download > 0:
-        spread = max(download_speeds) - min(download_speeds)
-        variance_pct = round((spread / avg_download) * 100, 1)
+    download = result.get("download_mbps") or 0.0
+    upload = result.get("upload_mbps")
+    ping = result.get("ping_ms") or 0.0
+    loss = result.get("packet_loss_pct") or 0.0
 
     verdict = _diagnose(
-        avg_download=avg_download,
-        avg_ping=avg_ping,
-        variance_pct=variance_pct,
-        n_servers=len(results),
+        download=download,
+        ping=ping,
+        loss=loss,
+        bufferbloat_delta=(bufferbloat or {}).get("delta_ms", 0.0),
     )
 
     return {
-        "avg_download_mbps": avg_download,
-        "avg_upload_mbps": avg_upload,
-        "avg_ping_ms": avg_ping,
-        "variance_pct": variance_pct,
+        "download_mbps": download,
+        "upload_mbps": upload,
+        "ping_ms": ping,
+        "packet_loss_pct": loss,
         "verdict": verdict,
     }
 
 
-def _diagnose(
-    avg_download: float,
-    avg_ping: float,
-    variance_pct: float,
-    n_servers: int,
-) -> str:
-    """
-    Maps numbers to a human readable diagnosis.
+def _diagnose(download: float, ping: float, loss: float, bufferbloat_delta: float) -> str:
+    if loss > 5:
+        return "Packet loss detected"
 
-    Rules are checked in priority order,
-    worst condition first, healthy last.
-    """
+    if bufferbloat_delta > 200:
+        return "Severe bufferbloat — calls and gaming will lag"
 
-    if n_servers > 1 and variance_pct > 30:
-        return "Routing instability detected"
-
-    if avg_ping > 100 and avg_download >= 10:
+    if ping > 100 and download >= 10:
         return "Congestion detected"
 
-    if avg_download < 10:
+    if download < 10:
         return "ISP bandwidth is just low"
 
     return "Connection is healthy"
