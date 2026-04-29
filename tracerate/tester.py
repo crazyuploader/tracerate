@@ -1,32 +1,19 @@
-import time
-import socket
-import httpx
 import os
+import socket
+import time
+from typing import Callable
+
+import httpx
 
 
-SERVERS = [
-    {
-        "name": "Cloudflare",
-        "down": "https://speed.cloudflare.com/__down?bytes={bytes}",
-        "up": "https://speed.cloudflare.com/__up",
-        "host": "speed.cloudflare.com",
-        "port": 443,
-    },
-    {
-        "name": "Hetzner",
-        "down": "https://speed.hetzner.de/100MB.bin",
-        "up": None,
-        "host": "speed.hetzner.de",
-        "port": 443,
-    },
-    {
-        "name": "Frappe",
-        "down": "https://speedtest.frappe.io/api/method/frappe.utils.speed_test.download?size={bytes}",
-        "up": None,
-        "host": "speedtest.frappe.io",
-        "port": 443,
-    },
-]
+SERVER = {
+    "name": "Cloudflare",
+    "down": "https://speed.cloudflare.com/__down?bytes={bytes}",
+    "up": "https://speed.cloudflare.com/__up",
+    "host": "speed.cloudflare.com",
+    "port": 443,
+}
+
 
 def measure_ping(host: str, port: int, attempts: int = 5) -> tuple[float, float]:
     """
@@ -62,13 +49,20 @@ def measure_ping(host: str, port: int, attempts: int = 5) -> tuple[float, float]
 
     return round(average_latency, 2), round(packet_loss, 1)
 
-def measure_download(url: str, bytes_to_download: int) -> float:
+
+def measure_download(
+    url: str,
+    bytes_to_download: int,
+    on_progress: Callable[[int], None] | None = None,
+) -> float:
     """
     Downloads a file in chunks and measures speed in Mbps.
 
-    We stream the response — meaning we process each chunk
-    as it arrives and discard it. We never hold the full
-    file in memory.
+    We stream the response and discard each chunk —
+    bytes are never held in memory.
+
+    `on_progress(total_bytes)` is called per chunk if provided,
+    so the caller can drive a progress bar.
 
     Returns: speed in Mbps, or 0.0 if it failed.
     """
@@ -81,6 +75,9 @@ def measure_download(url: str, bytes_to_download: int) -> float:
         with httpx.stream("GET", url, timeout=30, follow_redirects=True) as response:
             for chunk in response.iter_bytes():
                 total_bytes += len(chunk)
+                if on_progress is not None:
+                    on_progress(total_bytes)
+
         elapsed = time.perf_counter() - start
 
         if elapsed == 0 or total_bytes == 0:
@@ -92,13 +89,14 @@ def measure_download(url: str, bytes_to_download: int) -> float:
     except Exception:
         return 0.0
 
+
 def measure_upload(url: str, bytes_to_upload: int = 10_000_000) -> float:
     """
     Uploads random bytes to a server and measures speed in Mbps.
 
     Why random bytes?
     Some servers or network equipment compress data in transit.
-    Random bytes can't be compressed — gives you an honest measurement.
+    Random bytes can't be compressed — gives an honest measurement.
 
     Returns: speed in Mbps, or 0.0 if it failed.
     """
@@ -106,7 +104,7 @@ def measure_upload(url: str, bytes_to_upload: int = 10_000_000) -> float:
     data = os.urandom(bytes_to_upload)
     try:
         start = time.perf_counter()
-        response = httpx.post(url, content=data, timeout=30)
+        httpx.post(url, content=data, timeout=30)
         elapsed = time.perf_counter() - start
         if elapsed == 0:
             return 0.0
@@ -114,44 +112,3 @@ def measure_upload(url: str, bytes_to_upload: int = 10_000_000) -> float:
         return round(speed_mbps, 2)
     except Exception:
         return 0.0
-
-def run_tests(
-    n_servers: int,
-    bytes_to_download: int,
-    test_upload: bool,
-) -> list[dict]:
-    """
-    Runs ping + download (+ optionally upload) against N servers.
-    Returns a list of result dicts, one per server.
-    """
-
-    selected = SERVERS[:n_servers]
-    results = []
-
-    for server in selected:
-        print(f"Testing {server['name']}...")
-
-        result = {
-            "name": server["name"],
-            "ping_ms": None,
-            "packet_loss_pct": None,
-            "download_mbps": None,
-            "upload_mbps": None,
-            "error": None,
-        }
-
-        ping, loss = measure_ping(server["host"], server["port"])
-        result["ping_ms"] = ping
-        result["packet_loss_pct"] = loss
-
-        if server["down"]:
-            result["download_mbps"] = measure_download(
-                server["down"], bytes_to_download
-            )
-
-        if test_upload and server["up"]:
-            result["upload_mbps"] = measure_upload(server["up"])
-
-        results.append(result)
-
-    return results
