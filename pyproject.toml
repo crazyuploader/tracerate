@@ -7,6 +7,8 @@ name = "tracerate"
 version = "0.1.0"
 description = "A no-nonsense CLI internet speed tester"
 requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
 dependencies = [
     "httpx",
     "typer",
