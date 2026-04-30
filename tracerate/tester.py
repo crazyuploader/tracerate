@@ -39,15 +39,19 @@ def measure_ping(host: str, port: int, attempts: int = 5) -> tuple[float, float]
         except (socket.timeout, socket.error):
             pass
         finally:
-            sock.close()
+            try:
+                sock.close()
+            except Exception:
+                pass
 
     if not results:
         return 0.0, 0.0
 
     average_latency = sum(results) / len(results)
     packet_loss = ((attempts - len(results)) / attempts) * 100
+    jitter = round(max(results) - min(results), 2)
 
-    return round(average_latency, 2), round(packet_loss, 1)
+    return round(average_latency, 2), round(packet_loss, 1), round(jitter, 2)
 
 
 def measure_download(

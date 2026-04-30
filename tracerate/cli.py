@@ -59,7 +59,7 @@ def run(
         dns_ms = measure_dns(SERVER["host"])
 
     with console.status("[dim]Measuring latency...[/dim]", spinner="dots"):
-        ping_ms, loss_pct = measure_ping(SERVER["host"], SERVER["port"])
+        ping_ms, loss_pct, jitter_ms = measure_ping(SERVER["host"], SERVER["port"])
 
     download_mbps = _run_download(download_bytes, quiet=(output == "json"))
 
@@ -82,6 +82,7 @@ def run(
         "name": SERVER["name"],
         "ping_ms": ping_ms,
         "packet_loss_pct": loss_pct,
+        "jitter_ms": jitter_ms,
         "download_mbps": download_mbps,
         "upload_mbps": upload_mbps,
         "error": None,
@@ -180,6 +181,7 @@ def _render_speed(r: dict) -> None:
     dl = r.get("download_mbps") or 0.0
     ul = r.get("upload_mbps") or 0.0
     ping = r.get("ping_ms") or 0.0
+    jitter = r.get("jitter_ms") or 0.0
     loss = r.get("packet_loss_pct") or 0.0
 
     scale = max(dl, ul, 100.0)
@@ -190,6 +192,7 @@ def _render_speed(r: dict) -> None:
 
     loss_part = f"[red]· {loss}% loss[/red]" if loss > 0 else "[dim]· 0% loss[/dim]"
     console.print(f"   [dim]Ping    [/dim]  [bold]{ping}[/bold] [dim]ms[/dim]   {loss_part}")
+    console.print(f"   [dim]Jitter  [/dim]  [bold]{jitter}[/bold] [dim]ms[/dim]")
     console.print()
 
 
