@@ -14,6 +14,12 @@ SERVER = {
     "port": 443,
 }
 
+_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "*/*",
+    "Referer": "https://speed.cloudflare.com/",
+}
+
 
 def measure_ping(host: str, port: int, attempts: int = 5) -> tuple[float, float]:
     """
@@ -76,7 +82,14 @@ def measure_download(
         total_bytes = 0
         start = time.perf_counter()
 
-        with httpx.stream("GET", url, timeout=30, follow_redirects=True) as response:
+        with httpx.stream(
+            "GET",
+            url,
+            timeout=30,
+            follow_redirects=True,
+            headers=_REQUEST_HEADERS,
+        ) as response:
+            response.raise_for_status()
             for chunk in response.iter_bytes():
                 total_bytes += len(chunk)
                 if on_progress is not None:
