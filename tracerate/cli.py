@@ -32,7 +32,7 @@ def run(
         default=False,
         help="Skip upload + bufferbloat + regional probes; use 10MB download.",
     ),
-    bytes_mb: int = typer.Option(
+    bytes: int = typer.Option(
         default=25,
         help="Download size in MB.",
     ),
@@ -45,7 +45,7 @@ def run(
         typer.echo("--output must be 'pretty' or 'json'", err=True)
         raise typer.Exit(code=1)
 
-    download_bytes = (10 if quick else bytes_mb) * 1024 * 1024
+    download_bytes = (10 if quick else bytes) * 1024 * 1024
     test_upload = not quick
     test_extras = not quick
 
