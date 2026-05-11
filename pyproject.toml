@@ -7,13 +7,20 @@ name = "tracerate"
 version = "1.0.0"
 description = "A no-nonsense CLI internet speed tester"
 requires-python = ">=3.10"
-readme = "README.md"
-license = { text = "MIT" }
 dependencies = [
     "httpx",
     "typer",
     "rich",
 ]
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Rushil B Patel", email = "rushil13579@gmail.com" },
+]
+keywords = ["internet", "speed", "test", "cli", "command-line"]
+
+[project.urls]
+repository = "https://github.com/rushil-b-patel/tracerate"
 
 [project.scripts]
 tracerate = "tracerate.cli:app"
