@@ -23,49 +23,49 @@ def get_ip_info() -> dict:
     }
 
     try:
-        with httpx.get("https://ipinfo.io/json", timeout=5) as response:
-            response.raise_for_status()
-            data = response.json()
-            info["ip"] = data.get("ip")
-            info["city"] = data.get("city")
-            info["country"] = data.get("country")
-            org = data.get("org") or ""
-            if org.startswith("AS") and " " in org:
-                asn, _, name = org.partition(" ")
-                info["asn"] = asn
-                info["isp"] = name
-            elif org:
-                info["isp"] = org
+        response = httpx.get("https://ipinfo.io/json", timeout=5)
+        response.raise_for_status()
+        data = response.json()
+        info["ip"] = data.get("ip")
+        info["city"] = data.get("city")
+        info["country"] = data.get("country")
+        org = data.get("org") or ""
+        if org.startswith("AS") and " " in org:
+            asn, _, name = org.partition(" ")
+            info["asn"] = asn
+            info["isp"] = name
+        elif org:
+            info["isp"] = org
     except Exception:
         pass
 
     try:
-        with httpx.get("https://speed.cloudflare.com/meta",
+        response = httpx.get("https://speed.cloudflare.com/meta",
                 timeout=5,
                 headers={
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/json",
                     "Referer": "https://speed.cloudflare.com/",
                 },
-            ) as response:
-            response.raise_for_status()
-            data = response.json()
-            colo = data.get("colo")
-            if isinstance(colo, dict):
-                info["colo"] = colo.get("iata")
-                info["colo_city"] = colo.get("city")
-            elif isinstance(colo, str):
-                info["colo"] = colo
-            if not info["isp"]:
-                info["isp"] = data.get("asOrganization")
-            if not info["asn"] and data.get("asn"):
-                info["asn"] = f"AS{data['asn']}"
-            if not info["city"]:
-                info["city"] = data.get("city")
-            if not info["country"]:
-                info["country"] = data.get("country")
-            if not info["ip"]:
-                info["ip"] = data.get("clientIp")
+            )
+        response.raise_for_status()
+        data = response.json()
+        colo = data.get("colo")
+        if isinstance(colo, dict):
+            info["colo"] = colo.get("iata")
+            info["colo_city"] = colo.get("city")
+        elif isinstance(colo, str):
+            info["colo"] = colo
+        if not info["isp"]:
+            info["isp"] = data.get("asOrganization")
+        if not info["asn"] and data.get("asn"):
+            info["asn"] = f"AS{data['asn']}"
+        if not info["city"]:
+            info["city"] = data.get("city")
+        if not info["country"]:
+            info["country"] = data.get("country")
+        if not info["ip"]:
+            info["ip"] = data.get("clientIp")
     except Exception:
         pass
 
