@@ -17,20 +17,18 @@ def saturate_download(stop_flag: threading.Event, url: str) -> None:
         pass
 
 def sample_ping(host: str, port: int) -> float | None:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2)
     try:
-        start = time.perf_counter()
-        s.connect((host, port))
-        end = time.perf_counter()
-        return (end - start) * 1000
-    except(socket.timeout, socket.error):
-        return None
-    finally:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
         try:
+            start = time.perf_counter()
+            s.connect((host, port))
+            end = time.perf_counter()
+            return (end - start) * 1000
+        finally:
             s.close()
-        except Exception:
-            pass
+    except (socket.timeout, socket.error):
+        return None
 
 def bufferbloat(duration: float = 5.0, attempts: int = 8) -> dict:
     """

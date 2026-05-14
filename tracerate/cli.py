@@ -5,9 +5,10 @@ from rich.console import Console
 from tracerate.info import get_ip_info, measure_dns
 from tracerate.tester import (
     SERVER,
+    UPLOAD_MAX_BYTES,
     ping,
     download,
-    upload
+    upload,
 )
 from rich.progress import (
     BarColumn,
@@ -23,17 +24,41 @@ from tracerate.bufferbloat import bufferbloat as measure_bufferbloat
 app = typer.Typer(help="tracerate - a no-nonsense CLI internet speed tester")
 console = Console()
 
+
+def run_download(download_bytes: int, quiet: bool) -> float:
+    """Run the main download with a live progress bar."""
+
+    if quiet:
+        return download(SERVER["download_url"], download_bytes)
+
+    with Progress(
+        TextColumn("  [dim]Downloading[/dim]"),
+        BarColumn(bar_width=30, complete_style="cyan", finished_style="cyan"),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("dl", total=download_bytes)
+
+        def on_progress(total: int) -> None:
+            progress.update(task, completed=total)
+
+        return download(SERVER["download_url"], download_bytes, on_progress=on_progress)
+
+
 @app.command()
 def run(
-        quick: bool = typer.Option(default=False, help="Skip upload, upfferbloat, and regional probes. And only use 50MB download."),
-        bytes: int = typer.Option(default=100, help="Download size in MB."),
+        quick: bool = typer.Option(default=False, help="Skip upload, bufferbloat, and regional probes. And only use 50MB download."),
+        size: int = typer.Option(default=100, help="Download size in MB."),
         output: str = typer.Option(default="pretty", help="Output format: pretty or json.")
     ):
         if output not in ("pretty", "json"):
                 typer.echo("--output must be 'pretty' or 'json'", err=True)
                 raise typer.Exit(code=1)
 
-        download_bytes = (50 if quick else bytes) * 1024 * 1024
+        size_effective = 50 if quick else size
+        download_bytes = size_effective * 1024 * 1024
         test_upload = not quick
         test_extras = not quick
 
@@ -53,7 +78,8 @@ def run(
 
         upload_mbps = None
         if test_upload:
-            with console.status("[dim]Uploading 100 MB...[/dim]", spinner="dots"):
+            upload_mb = min(size_effective, UPLOAD_MAX_BYTES // (1024 * 1024))
+            with console.status(f"[dim]Uploading {upload_mb} MB...[/dim]", spinner="dots"):
                 upload_mbps = upload(SERVER["upload_url"], download_bytes)
 
         bufferbloat = None
@@ -89,27 +115,6 @@ def run(
             return
 
         render(info, dns_ms, result, bufferbloat, regions, summary)
-
-def run_download(download_bytes: int, quiet: bool) -> float:
-    """Run the main download with a live progress bar."""
-
-    if quiet:
-        return download(SERVER["download_url"], download_bytes)
-
-    with Progress(
-        TextColumn("  [dim]Downloading[/dim]"),
-        BarColumn(bar_width=30, complete_style="cyan", finished_style="cyan"),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("dl", total=download_bytes)
-
-        def on_progress(total: int) -> None:
-            progress.update(task, completed=total)
-
-        return download(SERVER["download_url"], download_bytes, on_progress=on_progress)
 
 
 _DIVIDER = "[dim]" + "─" * 56 + "[/dim]"
@@ -219,9 +224,9 @@ def render_regions(regions: list[dict]) -> None:
 
 
 def render_verdict(verdict: str) -> None:
-    if verdict == "Connection looks healthy":
+    if verdict == "Connection looks healthy.":
         mark, color = "✔", "green"
-    elif verdict in ("Low bandwidth, ISP speed is the bottleneck",):
+    elif verdict in ("Low bandwidth, ISP speed is the bottleneck.",):
         mark, color = "⚠", "yellow"
     else:
         mark, color = "✘", "red"
