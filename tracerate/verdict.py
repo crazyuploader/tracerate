@@ -1,12 +1,12 @@
 def _diagnose(download, ping, jitter, loss, bufferbloat_delta) -> str:
     if loss > 5:
-        return "Packet loss deteced, connection is unstable."
+        return "Packet loss detected, connection is unstable."
     if bufferbloat_delta > 200:
-        return "Server bufferbloat, router queue is overloaded."
+        return "Severe bufferbloat, router queue is overloaded."
     if ping > 100 and download >= 10:
         return "High latency, likely congestion or poor routing."
     if jitter > 30:
-        return "Highe jitter, connection is unstable."
+        return "High jitter, connection is unstable."
     if download < 10:
         return "Low bandwidth, ISP speed is the bottleneck."
     return "Connection looks healthy."

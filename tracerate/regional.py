@@ -24,17 +24,15 @@ def tcp_ping(host: str, port: int = 443, attempts: int = 3, timeout: float = 2.0
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
-            start = time.perf_counter()
-            s.connect((host, port))
-            end = time.perf_counter()
-            samples.append((end-start) * 1000)
+            try:
+                start = time.perf_counter()
+                s.connect((host, port))
+                end = time.perf_counter()
+                samples.append((end-start) * 1000)
+            finally:
+                s.close()
         except (socket.timeout, socket.error):
             pass
-        finally:
-            try:
-                s.close()
-            except Exception:
-                pass
 
     if not samples:
         return 0.0
@@ -50,6 +48,6 @@ def ping_regions() -> list[dict]:
             try:
                 ms = future.result()
             except Exception:
-                ms = None
+                ms = 0.0
             results.append({"code": code, "city": city, "host": host, "ms": ms})
     return results

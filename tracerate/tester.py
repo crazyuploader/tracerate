@@ -32,22 +32,20 @@ def ping(host: str, port: int, attempts: int = 5):
     results = []
 
     for _ in range(attempts):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(3)
-
         try:
-            start = time.perf_counter()
-            s.connect((host, port))
-            end = time.perf_counter()
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(3)
+            try:
+                start = time.perf_counter()
+                s.connect((host, port))
+                end = time.perf_counter()
 
-            latency = (end - start) * 1000
-            results.append(latency)
-
+                latency = (end - start) * 1000
+                results.append(latency)
+            finally:
+                s.close()
         except (socket.timeout, socket.error):
             results.append(None)
-            pass
-        finally:
-            s.close()
 
     valid_results = [r for r in results if r is not None]
     if not valid_results:
@@ -58,13 +56,13 @@ def ping(host: str, port: int, attempts: int = 5):
     jitter = max(valid_results) - min(valid_results)
     return round(average_latency, 2), round(packet_loss, 1), round(jitter, 2)
 
-def download(url: str, bytes: int, on_progess: Callable[[int], None] | None = None) -> float:
+def download(url: str, size_bytes: int, on_progress: Callable[[int], None] | None = None) -> float:
     """
     Downloads streams of data and measure speed in Mbps.
 
     Returns: speed in Mbps, or 0.0 if it fails.
     """
-    url = url.format(bytes=bytes)
+    url = url.format(bytes=size_bytes)
     try:
         total_bytes = 0
         start = time.perf_counter()
@@ -72,8 +70,8 @@ def download(url: str, bytes: int, on_progess: Callable[[int], None] | None = No
             response.raise_for_status()
             for chunk in response.iter_bytes():
                 total_bytes += len(chunk)
-                if on_progess:
-                    on_progess(total_bytes)
+                if on_progress:
+                    on_progress(total_bytes)
 
         end = time.perf_counter()
         elapsed_time = (end - start)
@@ -84,24 +82,30 @@ def download(url: str, bytes: int, on_progess: Callable[[int], None] | None = No
         speed = (total_bytes * 8) / elapsed_time / 1_000_000
         return round(speed, 2)
 
-    except Exception:
+    except (httpx.HTTPError, OSError):
         return 0.0
 
-def upload(url: str, bytes: int) -> float:
-    """"
-    Uploads random bytes of data to a server and measure speed in Mbps.
+UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
-    Returns: upload speed in Mbps, or 0.0 if it fails.
+def upload(url: str, size_bytes: int) -> float:
     """
-    data = os.urandom(bytes)
+    Uploads random bytes of data to a server and measure speed in Mbps.
+    Caps payload at UPLOAD_MAX_BYTES so typical asymmetric links finish.
+
+    Returns: speed in Mbps, or 0.0 if it fails.
+    """
+    size_bytes = min(size_bytes, UPLOAD_MAX_BYTES)
+    data = os.urandom(size_bytes)
+    timeout = httpx.Timeout(connect=10.0, read=60.0, write=300.0, pool=10.0)
     try:
         start = time.perf_counter()
-        httpx.post(url, content=data)
+        response = httpx.post(url, content=data, timeout=timeout, headers=REQUEST_HEADERS)
+        response.raise_for_status()
         end = time.perf_counter()
         elapsed_time = end - start
         if elapsed_time == 0:
             return 0.0
-        speed = (bytes * 8) / elapsed_time / 1_000_000
+        speed = (size_bytes * 8) / elapsed_time / 1_000_000
         return round(speed, 2)
-    except Exception:
+    except (httpx.HTTPError, OSError):
         return 0.0

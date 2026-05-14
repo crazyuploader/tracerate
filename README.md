@@ -8,7 +8,7 @@ A no-nonsense CLI internet speed tester.
 - Bufferbloat grade (A+ to F)
 - DNS resolution time
 - ISP and location detection
-- Regional latency to 7 global servers
+- Regional latency to 8 global servers
 
 ## Install
 pip install tracerate
@@ -19,5 +19,5 @@ pip install tracerate
 |---|---|
 | `tracerate` | Full test (download, upload, bufferbloat, regional latency) |
 | `tracerate --quick` | Fast test (download only, skips upload and extras) |
-| `tracerate --bytes 50` | Custom download size in MB (default: 25) |
+| `tracerate --size 500` | Custom download size in MB (default: 100) |
 | `tracerate --output json` | Machine readable output |
