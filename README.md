@@ -18,6 +18,7 @@ pip install tracerate
 | Command | Description |
 |---|---|
 | `tracerate` | Full test (download, upload, bufferbloat, regional latency) |
-| `tracerate --quick` | Fast test (download only, skips upload and extras) |
-| `tracerate --size 500` | Custom download size in MB (default: 100) |
+| `tracerate --quick` | Fast test (10s download only, skips upload and extras) |
+| `tracerate --duration 30` | Custom download duration in seconds (default: 15) |
+| `tracerate --streams 8` | Parallel download streams (default: 6) |
 | `tracerate --output json` | Machine readable output |

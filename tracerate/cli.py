@@ -12,10 +12,8 @@ from tracerate.tester import (
 )
 from rich.progress import (
     BarColumn,
-    DownloadColumn,
     Progress,
     TextColumn,
-    TransferSpeedColumn,
 )
 from tracerate.verdict import analyze
 from tracerate.regional import ping_regions
@@ -25,40 +23,43 @@ app = typer.Typer(help="tracerate - a no-nonsense CLI internet speed tester")
 console = Console()
 
 
-def run_download(download_bytes: int, quiet: bool) -> float:
+def run_download(duration_s: float, streams: int, quiet: bool) -> float:
     """Run the main download with a live progress bar."""
 
     if quiet:
-        return download(SERVER["download_url"], download_bytes)
+        return download(SERVER["download_url"], duration_s=duration_s, streams=streams)
 
     with Progress(
         TextColumn("  [dim]Downloading[/dim]"),
         BarColumn(bar_width=30, complete_style="cyan", finished_style="cyan"),
-        DownloadColumn(),
-        TransferSpeedColumn(),
+        TextColumn("[bold]{task.fields[mbps]:>7.2f}[/bold] [dim]Mbps[/dim]"),
+        TextColumn("[dim]{task.fields[secs]:>4.1f}s[/dim]"),
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("dl", total=download_bytes)
+        ticks = 1000
+        task = progress.add_task("dl", total=ticks, mbps=0.0, secs=0.0)
 
-        def on_progress(total: int) -> None:
-            progress.update(task, completed=total)
+        def on_progress(total_bytes: int, elapsed: float) -> None:
+            mbps = (total_bytes * 8) / elapsed / 1_000_000 if elapsed > 0 else 0.0
+            ratio = min(elapsed / duration_s, 1.0)
+            progress.update(task, completed=int(ratio * ticks), mbps=mbps, secs=elapsed)
 
-        return download(SERVER["download_url"], download_bytes, on_progress=on_progress)
+        return download(SERVER["download_url"], duration_s=duration_s, streams=streams, on_progress=on_progress)
 
 
 @app.command()
 def run(
-        quick: bool = typer.Option(default=False, help="Skip upload, bufferbloat, and regional probes. And only use 50MB download."),
-        size: int = typer.Option(default=100, help="Download size in MB."),
+        quick: bool = typer.Option(default=False, help="Skip upload, bufferbloat, and regional probes. Use 10s download."),
+        duration: float = typer.Option(default=15.0, help="Download test duration in seconds."),
+        streams: int = typer.Option(default=6, help="Parallel download streams."),
         output: str = typer.Option(default="pretty", help="Output format: pretty or json.")
     ):
         if output not in ("pretty", "json"):
                 typer.echo("--output must be 'pretty' or 'json'", err=True)
                 raise typer.Exit(code=1)
 
-        size_effective = 50 if quick else size
-        download_bytes = size_effective * 1024 * 1024
+        duration_s = 10.0 if quick else duration
         test_upload = not quick
         test_extras = not quick
 
@@ -74,20 +75,20 @@ def run(
         with console.status("[dim]Measuring latency...[/dim]", spinner="dots"):
             ping_ms, loss_pct, jitter_ms = ping(SERVER["host"], SERVER["port"])
 
-        download_mbps = run_download(download_bytes, quiet=(output == "json"))
+        download_mbps = run_download(duration_s, streams, quiet=(output == "json"))
 
         upload_mbps = None
         if test_upload:
-            upload_mb = min(size_effective, UPLOAD_MAX_BYTES // (1024 * 1024))
+            upload_mb = UPLOAD_MAX_BYTES // (1024 * 1024)
             with console.status(f"[dim]Uploading {upload_mb} MB...[/dim]", spinner="dots"):
-                upload_mbps = upload(SERVER["upload_url"], download_bytes)
+                upload_mbps = upload(SERVER["upload_url"], UPLOAD_MAX_BYTES)
 
         bufferbloat = None
         if test_extras:
             with console.status("[dim]Probing bufferbloat (saturating link)...[/dim]", spinner="dots"):
                 bufferbloat = measure_bufferbloat()
 
-        regions=[]
+        regions = []
         if test_extras:
             with console.status("[dim]Pinging regional servers...[/dim]", spinner="dots"):
                 regions = ping_regions()
