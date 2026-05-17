@@ -7,7 +7,7 @@ REGIONS = [
     ("IN", "Mumbai (South Asia)", "speedtest.mumbai1.linode.com"),
     ("SG", "Singapore (SouthEast Asia)", "speedtest.singapore.linode.com"),
     ("JP", "Tokyo (East Asia)", "speedtest.tokyo2.linode.com"),
-    ("GB", "London (SouthEast Asia)", "speedtest.london.linode.com"),
+    ("GB", "London (Europe)", "speedtest.london.linode.com"),
     ("DE", "Frankfurt (Europe)", "speedtest.frankfurt.linode.com"),
     ("US", "Newark (US East)", "speedtest.newark.linode.com"),
     ("US", "Fremont/Seattle (US West)", "speedtest.fremont.linode.com"),
