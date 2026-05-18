@@ -1,0 +1,121 @@
+version: 2.1
+
+orbs:
+  windows: circleci/windows@5.0
+
+executors:
+  linux-amd64:
+    docker:
+      - image: rust:latest
+    resource_class: medium
+
+  linux-arm64:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: arm.medium
+
+commands:
+  install-rust:
+    steps:
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+            echo 'source "$HOME/.cargo/env"' >> "$BASH_ENV"
+
+  cargo-cache-restore:
+    steps:
+      - restore_cache:
+          keys:
+            - cargo-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - cargo-v1-{{ arch }}-
+
+  cargo-cache-save:
+    steps:
+      - save_cache:
+          key: cargo-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+            - target
+
+jobs:
+  fmt:
+    executor: linux-amd64
+    steps:
+      - checkout
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    executor: linux-amd64
+    steps:
+      - checkout
+      - cargo-cache-restore
+      - run: rustup component add clippy
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - cargo-cache-save
+
+  build-linux-amd64:
+    executor: linux-amd64
+    steps:
+      - checkout
+      - cargo-cache-restore
+      - run: cargo build --release --locked
+      - cargo-cache-save
+
+  build-linux-arm64:
+    executor: linux-arm64
+    steps:
+      - checkout
+      - install-rust
+      - cargo-cache-restore
+      - run: cargo build --release --locked
+      - cargo-cache-save
+
+  build-macos:
+    macos:
+      xcode: "16.2.0"
+    resource_class: macos.m1.medium.gen1
+    steps:
+      - checkout
+      - install-rust
+      - cargo-cache-restore
+      - run: cargo build --release --locked
+      - cargo-cache-save
+
+  build-windows:
+    executor:
+      name: windows/default
+      size: medium
+    steps:
+      - checkout
+      - run:
+          name: Install Rust
+          shell: powershell.exe
+          command: |
+            $ProgressPreference = "SilentlyContinue"
+            Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile rustup-init.exe
+            .\rustup-init.exe -y --default-toolchain stable --no-modify-path
+            $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+            [Environment]::SetEnvironmentVariable("PATH", $env:PATH, "Machine")
+      - run:
+          name: Build
+          shell: powershell.exe
+          command: |
+            $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+            cargo build --release --locked
+
+workflows:
+  build-and-lint:
+    jobs:
+      - fmt
+      - clippy
+      - build-linux-amd64:
+          requires: [fmt, clippy]
+      - build-linux-arm64:
+          requires: [fmt, clippy]
+      - build-macos:
+          requires: [fmt, clippy]
+      - build-windows:
+          requires: [fmt, clippy]
