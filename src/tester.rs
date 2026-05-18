@@ -172,7 +172,7 @@ pub async fn download(
 
 pub async fn upload(url: &str, size_bytes: usize) -> f64 {
     let size_bytes = size_bytes.min(UPLOAD_MAX_BYTES);
-    let data: Vec<u8> = (0..size_bytes).map(|_| rand::random()).collect();
+    let data: Vec<u8> = (0..size_bytes).map(|_| rand::random::<u8>()).collect();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
