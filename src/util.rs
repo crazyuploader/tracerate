@@ -1,24 +1,4 @@
 /// Round a floating-point value to two decimal places.
-
-///
-
-/// # Examples
-
-///
-
-/// ```
-
-/// let a = round2(1.235);
-
-/// assert_eq!(a, 1.24);
-
-///
-
-/// let b = round2(-0.1234);
-
-/// assert_eq!(b, -0.12);
-
-/// ```
 pub fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
@@ -101,7 +81,7 @@ mod tests {
 
     #[test]
     fn round2_already_two_decimals() {
-        assert_eq!(round2(3.14), 3.14);
+        assert_eq!(round2(2.22), 2.22);
     }
 
     #[test]

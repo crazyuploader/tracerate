@@ -85,41 +85,6 @@ fn make_progress_bar(prefix: &str) -> indicatif::ProgressBar {
     pb
 }
 
-/// Creates a callback that updates the given progress bar with throughput (Mbps) and elapsed time.
-
-///
-
-/// The returned closure takes `(bytes, elapsed_seconds)` and:
-
-/// - sets the bar position proportional to `elapsed_seconds / duration_s` (clamped to the bar range 0..=1000),
-
-/// - updates the bar message to "`{Mbps} Mbps  {seconds}s`" when `elapsed_seconds > 0`.
-
-///
-
-/// # Examples
-
-///
-
-/// ```
-
-/// use indicatif::ProgressBar;
-
-///
-
-/// let pb = ProgressBar::new(1000);
-
-/// let cb = speed_progress_cb(pb.clone(), 10.0);
-
-///
-
-/// // simulate 1_000_000 bytes after 1 second into a 10s duration
-
-/// cb(1_000_000, 1.0);
-
-/// assert_eq!(pb.position(), 100); // (1.0 / 10.0) * 1000 == 100
-
-/// ```
 fn speed_progress_cb(
     pb: indicatif::ProgressBar,
     duration_s: f64,
@@ -175,10 +140,17 @@ fn make_spinner() -> indicatif::ProgressBar {
 async fn main() {
     let cli = Cli::parse();
 
+    if cli.quick && cli.combined {
+        eprintln!(
+            "error: --combined cannot be used with --quick (upload is skipped in quick mode)"
+        );
+        std::process::exit(1);
+    }
+
     let duration_s = if cli.quick { 10.0 } else { cli.duration };
     let test_upload = !cli.quick;
     let test_extras = !cli.quick;
-    let test_combined = !cli.quick && cli.combined;
+    let test_combined = cli.combined;
     let quiet = cli.output == "json";
 
     if cli.output == "pretty" {

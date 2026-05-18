@@ -56,6 +56,14 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - cargo-cache-save
 
+  test:
+    executor: linux-amd64
+    steps:
+      - checkout
+      - cargo-cache-restore
+      - run: cargo test --all-targets --all-features
+      - cargo-cache-save
+
   build-linux-amd64:
     executor: linux-amd64
     steps:
@@ -121,11 +129,13 @@ workflows:
     jobs:
       - fmt
       - clippy
+      - test:
+          requires: [fmt, clippy]
       - build-linux-amd64:
-          requires: [fmt, clippy]
+          requires: [fmt, clippy, test]
       - build-linux-arm64:
-          requires: [fmt, clippy]
+          requires: [fmt, clippy, test]
       - build-macos:
-          requires: [fmt, clippy]
+          requires: [fmt, clippy, test]
       - build-windows:
-          requires: [fmt, clippy]
+          requires: [fmt, clippy, test]

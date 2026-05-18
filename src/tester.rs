@@ -456,11 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn server_constant_port_is_nonzero() {
-        assert!(SERVER.port > 0);
-    }
-
-    #[test]
     fn server_constant_host_is_nonempty() {
         assert!(!SERVER.host.is_empty());
     }

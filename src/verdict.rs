@@ -213,7 +213,10 @@ mod tests {
             "packet_loss": 0.0
         });
         let v = analyze(&r, None);
-        assert_eq!(v.summary, "High latency, likely congestion or poor routing.");
+        assert_eq!(
+            v.summary,
+            "High latency, likely congestion or poor routing."
+        );
     }
 
     #[test]

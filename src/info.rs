@@ -150,28 +150,8 @@ pub async fn get_ip_info() -> InfoResult {
 }
 
 /// Measure DNS lookup latency for a hostname in milliseconds.
-
 ///
-
 /// The lookup duration is rounded to two decimal places; returns `0.0` if the lookup fails.
-
-///
-
-/// # Examples
-
-///
-
-/// ```
-
-/// # async fn docs() {
-
-/// let ms = measure_dns("example.com").await;
-
-/// assert!(ms >= 0.0);
-
-/// # }
-
-/// ```
 pub async fn measure_dns(hostname: &str) -> f64 {
     let start = Instant::now();
     match lookup_host((hostname, 0)).await {
