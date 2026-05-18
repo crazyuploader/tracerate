@@ -126,7 +126,7 @@ tracerate</pre>
         </div>
       </div>
 
-      <div id="panel-linux-arm64" class="tab-panel hidden">
+      <div id="panel-linux-arm64" class="tab-panel" style="display:none">
         <div
           class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
         >
@@ -170,7 +170,7 @@ tracerate</pre>
         </div>
       </div>
 
-      <div id="panel-macos" class="tab-panel hidden">
+      <div id="panel-macos" class="tab-panel" style="display:none">
         <div
           class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
         >
@@ -214,7 +214,7 @@ tracerate</pre>
         </div>
       </div>
 
-      <div id="panel-windows" class="tab-panel hidden">
+      <div id="panel-windows" class="tab-panel" style="display:none">
         <div
           class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
         >
@@ -279,12 +279,12 @@ tracerate</pre>
       function switchTab(id) {
         document
           .querySelectorAll(".tab-panel")
-          .forEach((p) => p.classList.add("hidden"));
+          .forEach((p) => (p.style.display = "none"));
         document.querySelectorAll(".tab-btn").forEach((b) => {
           b.classList.remove("border-white", "text-white");
           b.classList.add("border-transparent", "text-[#555]");
         });
-        document.getElementById("panel-" + id).classList.remove("hidden");
+        document.getElementById("panel-" + id).style.display = "block";
         const btn = document.getElementById("tab-" + id);
         btn.classList.add("border-white", "text-white");
         btn.classList.remove("border-transparent", "text-[#555]");
