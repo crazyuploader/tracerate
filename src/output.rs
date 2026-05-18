@@ -122,6 +122,8 @@ fn render_speed(r: &serde_json::Value) {
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
     let ul = r.get("upload_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let dl_bytes = r.get("download_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+    let ul_bytes = r.get("upload_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
     let ping = r.get("ping_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let jitter = r.get("jitter_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let loss = r.get("packet_loss").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -129,18 +131,20 @@ fn render_speed(r: &serde_json::Value) {
     let scale = dl.max(ul).max(100.0);
 
     println!(
-        "  {}   {}   {}",
+        "  {}   {}   {}   {}",
         format!("{:<8}", "Download").dimmed(),
         bar(dl, scale, 20).cyan(),
-        format!("{:.2} Mbps", dl).bold().cyan()
+        format!("{:.2} Mbps", dl).bold().cyan(),
+        format!("({:.1} MB)", dl_bytes as f64 / 1_048_576.0).dimmed()
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
         println!(
-            "  {}   {}   {}",
+            "  {}   {}   {}   {}",
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
-            format!("{:.2} Mbps", ul).bold().cyan()
+            format!("{:.2} Mbps", ul).bold().cyan(),
+            format!("({:.1} MB)", ul_bytes as f64 / 1_048_576.0).dimmed()
         );
     }
 

@@ -78,7 +78,7 @@ pub async fn download(
     duration_s: f64,
     streams: usize,
     on_progress: Option<ProgressCallback>,
-) -> f64 {
+) -> (f64, u64) {
     let url = url_template.replace("{bytes}", "1000000000");
 
     let client = reqwest::Client::builder()
@@ -163,11 +163,11 @@ pub async fn download(
     }
 
     if elapsed <= 0.0 || bytes_transferred == 0 {
-        return 0.0;
+        return (0.0, 0);
     }
 
     let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    round2(speed_mbps)
+    (round2(speed_mbps), bytes_transferred)
 }
 
 pub async fn upload(
@@ -175,7 +175,7 @@ pub async fn upload(
     duration_s: f64,
     streams: usize,
     on_progress: Option<ProgressCallback>,
-) -> f64 {
+) -> (f64, u64) {
     let data: Arc<Vec<u8>> = Arc::new(
         (0..UPLOAD_CHUNK_BYTES)
             .map(|_| rand::random::<u8>())
@@ -258,11 +258,11 @@ pub async fn upload(
     }
 
     if elapsed <= 0.0 || bytes_transferred == 0 {
-        return 0.0;
+        return (0.0, 0);
     }
 
     let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    round2(speed_mbps)
+    (round2(speed_mbps), bytes_transferred)
 }
 
 fn round2(v: f64) -> f64 {
