@@ -27,7 +27,7 @@ const REQUEST_HEADERS: [(&str, &str); 3] = [
     ("Referer", "https://speed.cloudflare.com/"),
 ];
 
-pub const UPLOAD_MAX_BYTES: usize = 25 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, Option<f64>) {
     let mut results = Vec::new();
@@ -170,45 +170,99 @@ pub async fn download(
     round2(speed_mbps)
 }
 
-pub async fn upload(url: &str, size_bytes: usize) -> f64 {
-    let size_bytes = size_bytes.min(UPLOAD_MAX_BYTES);
-    let data: Vec<u8> = (0..size_bytes).map(|_| rand::random::<u8>()).collect();
+pub async fn upload(
+    url: &str,
+    duration_s: f64,
+    streams: usize,
+    on_progress: Option<ProgressCallback>,
+) -> f64 {
+    let data: Arc<Vec<u8>> = Arc::new(
+        (0..UPLOAD_CHUNK_BYTES)
+            .map(|_| rand::random::<u8>())
+            .collect(),
+    );
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .unwrap();
-
-    let start = Instant::now();
-
-    let result = client
-        .post(url)
-        .headers({
+        .timeout(std::time::Duration::from_secs(60))
+        .default_headers({
             let mut h = reqwest::header::HeaderMap::new();
             for (k, v) in REQUEST_HEADERS {
                 h.insert(k, v.parse().unwrap());
             }
             h
         })
-        .body(data)
-        .send()
-        .await;
+        .build()
+        .unwrap();
 
-    match result {
-        Ok(response) => {
-            if response.status().is_success() {
-                let elapsed = start.elapsed().as_secs_f64();
-                if elapsed == 0.0 {
-                    return 0.0;
+    let stop = Arc::new(AtomicBool::new(false));
+    let total_bytes = Arc::new(AtomicU64::new(0));
+    let measure_start = Arc::new(AtomicU64::new(0));
+
+    let mut handles = Vec::new();
+
+    for _ in 0..streams {
+        let client = client.clone();
+        let url = url.to_string();
+        let stop = stop.clone();
+        let total_bytes = total_bytes.clone();
+        let measure_start = measure_start.clone();
+        let data = data.clone();
+
+        let handle = task::spawn(async move {
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
                 }
-                let speed = (size_bytes as f64 * 8.0) / elapsed / 1_000_000.0;
-                round2(speed)
-            } else {
-                0.0
+
+                let chunk = data.as_ref().clone();
+                let len = chunk.len() as u64;
+
+                let result = client.post(&url).body(chunk).send().await;
+
+                if result.is_ok()
+                    && measure_start.load(Ordering::Relaxed) != 0
+                    && !stop.load(Ordering::Relaxed)
+                {
+                    total_bytes.fetch_add(len, Ordering::Relaxed);
+                }
             }
-        }
-        Err(_) => 0.0,
+        });
+
+        handles.push(handle);
     }
+
+    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
+
+    total_bytes.store(0, Ordering::Relaxed);
+    let start_instant = Instant::now();
+    measure_start.store(1, Ordering::Relaxed);
+
+    let end_at = start_instant + std::time::Duration::from_secs_f64(duration_s);
+
+    while Instant::now() < end_at {
+        if let Some(ref cb) = on_progress {
+            let bytes = total_bytes.load(Ordering::Relaxed);
+            let elapsed = start_instant.elapsed().as_secs_f64();
+            cb(bytes, elapsed);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    stop.store(true, Ordering::Relaxed);
+
+    let elapsed = start_instant.elapsed().as_secs_f64();
+    let bytes_transferred = total_bytes.load(Ordering::Relaxed);
+
+    for handle in handles {
+        let _ = handle.await;
+    }
+
+    if elapsed <= 0.0 || bytes_transferred == 0 {
+        return 0.0;
+    }
+
+    let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
+    round2(speed_mbps)
 }
 
 fn round2(v: f64) -> f64 {

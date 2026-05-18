@@ -101,7 +101,7 @@ async fn main() {
     };
 
     // New spinner for post-download phases (original was finish_and_clear'd above)
-    let spinner = if !quiet {
+    let mut spinner = if !quiet {
         let s = indicatif::ProgressBar::new_spinner();
         s.set_style(
             indicatif::ProgressStyle::default_spinner()
@@ -115,11 +115,51 @@ async fn main() {
     };
 
     let upload_mbps = if test_upload {
-        spinner.set_message(format!(
-            "Uploading {} MB...",
-            tester::UPLOAD_MAX_BYTES / (1024 * 1024)
-        ));
-        Some(tester::upload(tester::SERVER.upload_url, tester::UPLOAD_MAX_BYTES).await)
+        if quiet {
+            Some(
+                tester::upload(tester::SERVER.upload_url, duration_s, cli.streams, None).await,
+            )
+        } else {
+            spinner.finish_and_clear();
+
+            let pb = indicatif::ProgressBar::new(1000);
+            pb.set_style(
+                indicatif::ProgressStyle::default_bar()
+                    .template("  Uploading   —  {bar:20.cyan}  {msg}")
+                    .unwrap()
+                    .progress_chars("▰▱"),
+            );
+            pb.set_message("…");
+
+            let pb_clone = pb.clone();
+            let result = tester::upload(
+                tester::SERVER.upload_url,
+                duration_s,
+                cli.streams,
+                Some(Box::new(move |total_bytes, elapsed| {
+                    let ratio = (elapsed / duration_s).min(1.0);
+                    pb_clone.set_position((ratio * 1000.0) as u64);
+                    if elapsed > 0.0 {
+                        let speed_mbps = (total_bytes as f64 * 8.0) / elapsed / 1_000_000.0;
+                        pb_clone.set_message(format!("{:.2} Mbps  {:.1}s", speed_mbps, elapsed));
+                    }
+                })),
+            )
+            .await;
+
+            pb.finish_and_clear();
+
+            let s = indicatif::ProgressBar::new_spinner();
+            s.set_style(
+                indicatif::ProgressStyle::default_spinner()
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+            s.enable_steady_tick(std::time::Duration::from_millis(100));
+            spinner = s;
+
+            Some(result)
+        }
     } else {
         None
     };
