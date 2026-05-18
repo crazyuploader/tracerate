@@ -15,10 +15,10 @@ pub struct BufferbloatResult {
     pub grade: String,
 }
 
-pub async fn measure_bufferbloat(duration: f64, attempts: usize) -> BufferbloatResult {
+pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatResult {
+    // Idle baseline: average of 8 TCP pings before any load
     let mut idle_samples = Vec::new();
-
-    for _ in 0..attempts {
+    for _ in 0..8 {
         if let Some(ms) = tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
             idle_samples.push(ms);
         }
@@ -33,41 +33,50 @@ pub async fn measure_bufferbloat(duration: f64, attempts: usize) -> BufferbloatR
         };
     }
 
-    let idle = idle_samples.iter().cloned().fold(f64::MAX, f64::min);
+    let idle = idle_samples.iter().sum::<f64>() / idle_samples.len() as f64;
 
+    // Saturate with multiple concurrent download streams
     let url = tester::SERVER.download_url.replace("{bytes}", "200000000");
     let stop = Arc::new(AtomicBool::new(false));
+    let mut saturate_handles = Vec::new();
 
-    let stop_clone = stop.clone();
-    let saturate_handle = task::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap();
+    for _ in 0..streams {
+        let stop_clone = stop.clone();
+        let url_clone = url.clone();
 
-        loop {
-            if stop_clone.load(Ordering::Relaxed) {
-                break;
-            }
+        let handle = task::spawn(async move {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .unwrap();
 
-            let response = match client.get(&url).send().await {
-                Ok(r) => r,
-                Err(_) => break,
-            };
-
-            let mut stream = response.bytes_stream();
-
-            while let Some(chunk) = stream.next().await {
+            loop {
                 if stop_clone.load(Ordering::Relaxed) {
                     break;
                 }
-                let _ = chunk;
+
+                let response = match client.get(&url_clone).send().await {
+                    Ok(r) => r,
+                    Err(_) => break,
+                };
+
+                let mut stream = response.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    if stop_clone.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let _ = chunk;
+                }
             }
-        }
-    });
+        });
 
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        saturate_handles.push(handle);
+    }
 
+    // Wait for link to fully saturate before measuring
+    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
+
+    // Collect loaded latency samples, compute average
     let mut samples = Vec::new();
     let end_time = Instant::now() + std::time::Duration::from_secs_f64(duration);
 
@@ -79,7 +88,9 @@ pub async fn measure_bufferbloat(duration: f64, attempts: usize) -> BufferbloatR
     }
 
     stop.store(true, Ordering::Relaxed);
-    let _ = saturate_handle.await;
+    for handle in saturate_handles {
+        let _ = handle.await;
+    }
 
     if samples.is_empty() {
         return BufferbloatResult {
@@ -90,7 +101,7 @@ pub async fn measure_bufferbloat(duration: f64, attempts: usize) -> BufferbloatR
         };
     }
 
-    let loaded = samples.iter().cloned().fold(f64::MAX, f64::min);
+    let loaded = samples.iter().sum::<f64>() / samples.len() as f64;
     let delta = (loaded - idle).max(0.0);
 
     let grade = if delta < 5.0 {
