@@ -27,7 +27,8 @@ fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta:
 
 fn issues(
     download: f64,
-    upload: f64,
+    upload: Option<f64>,
+    upload_tested: bool,
     ping: f64,
     jitter: f64,
     loss: f64,
@@ -41,8 +42,8 @@ fn issues(
     if download < 25.0 {
         list.push(format!("Low download: {} Mbps", download));
     }
-    if upload < 10.0 {
-        list.push(format!("Low upload: {} Mbps", upload));
+    if upload_tested && upload.unwrap_or(0.0) < 10.0 {
+        list.push(format!("Low upload: {} Mbps", upload.unwrap_or(0.0)));
     }
     if ping > 80.0 {
         list.push(format!("High ping: {} ms", ping));
@@ -65,10 +66,8 @@ pub fn analyze(
         .get("download_mbps")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
-    let upload = result
-        .get("upload_mbps")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let upload = result.get("upload_mbps").and_then(|v| v.as_f64());
+    let upload_tested = upload.is_some();
     let ping = result
         .get("ping_ms")
         .and_then(|v| v.as_f64())
@@ -86,7 +85,15 @@ pub fn analyze(
     let bb_grade = bufferbloat.map(|bb| bb.grade.as_str()).unwrap_or("?");
 
     let summary = diagnose(download, ping, jitter, loss, delta);
-    let issue_list = issues(download, upload, ping, jitter, loss, bb_grade);
+    let issue_list = issues(
+        download,
+        upload,
+        upload_tested,
+        ping,
+        jitter,
+        loss,
+        bb_grade,
+    );
 
     VerdictResult {
         summary,

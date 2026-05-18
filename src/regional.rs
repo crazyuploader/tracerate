@@ -1,6 +1,7 @@
-use std::time::Instant;
-use tokio::net::TcpStream;
 use tokio::task;
+
+use crate::tester;
+use crate::util;
 
 struct Region {
     code: &'static str,
@@ -95,15 +96,8 @@ async fn tcp_ping(host: &str, port: u16, attempts: usize) -> f64 {
     let mut samples = Vec::new();
 
     for _ in 0..attempts {
-        let start = Instant::now();
-        if let Ok(Ok(_)) = tokio::time::timeout(
-            std::time::Duration::from_secs_f64(2.0),
-            TcpStream::connect((host, port)),
-        )
-        .await
-        {
-            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            samples.push(elapsed);
+        if let Some(ms) = tester::tcp_ping_once(host, port).await {
+            samples.push(ms);
         }
     }
 
@@ -111,9 +105,5 @@ async fn tcp_ping(host: &str, port: u16, attempts: usize) -> f64 {
         return 0.0;
     }
 
-    round2(samples.iter().cloned().fold(f64::MAX, f64::min))
-}
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
+    util::round2(samples.iter().cloned().fold(f64::MAX, f64::min))
 }

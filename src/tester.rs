@@ -5,6 +5,8 @@ use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::task;
 
+use crate::util;
+
 pub struct Server {
     pub name: &'static str,
     pub download_url: &'static str,
@@ -21,13 +23,34 @@ pub const SERVER: Server = Server {
     port: 443,
 };
 
-pub const REQUEST_HEADERS: [(&str, &str); 3] = [
+const REQUEST_HEADERS: [(&str, &str); 3] = [
     ("User-Agent", "Mozilla/5.0"),
     ("Accept", "*/*"),
     ("Referer", "https://speed.cloudflare.com/"),
 ];
 
 const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+
+pub fn build_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .expect("failed to build HTTP client")
+}
+
+pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            for (k, v) in REQUEST_HEADERS {
+                h.insert(k, v.parse().expect("invalid static header value"));
+            }
+            h
+        })
+        .build()
+        .expect("failed to build HTTP client")
+}
 
 pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, Option<f64>) {
     let mut results = Vec::new();
@@ -52,10 +75,15 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, 
         });
     let jitter = jitter.1 - jitter.0;
 
-    (Some(round2(avg)), round1(loss), Some(round2(jitter)))
+    (
+        Some(util::round2(avg)),
+        util::round1(loss),
+        Some(util::round2(jitter)),
+    )
 }
 
-async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
+/// Measures a single TCP round-trip to `host:port`. Returns `None` on timeout or error.
+pub async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
     let start = Instant::now();
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -80,18 +108,7 @@ pub async fn download(
     on_progress: Option<ProgressCallback>,
 ) -> (f64, u64) {
     let url = url_template.replace("{bytes}", "1000000000");
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            for (k, v) in REQUEST_HEADERS {
-                h.insert(k, v.parse().unwrap());
-            }
-            h
-        })
-        .build()
-        .unwrap();
+    let client = build_speed_client(30);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -166,8 +183,10 @@ pub async fn download(
         return (0.0, 0);
     }
 
-    let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    (round2(speed_mbps), bytes_transferred)
+    (
+        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
+        bytes_transferred,
+    )
 }
 
 pub async fn upload(
@@ -182,17 +201,7 @@ pub async fn upload(
             .collect(),
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            for (k, v) in REQUEST_HEADERS {
-                h.insert(k, v.parse().unwrap());
-            }
-            h
-        })
-        .build()
-        .unwrap();
+    let client = build_speed_client(60);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -261,14 +270,8 @@ pub async fn upload(
         return (0.0, 0);
     }
 
-    let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    (round2(speed_mbps), bytes_transferred)
-}
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
-
-fn round1(v: f64) -> f64 {
-    (v * 10.0).round() / 10.0
+    (
+        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
+        bytes_transferred,
+    )
 }

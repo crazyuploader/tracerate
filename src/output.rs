@@ -2,6 +2,7 @@ use colored::Colorize;
 
 use crate::info::InfoResult;
 use crate::regional::RegionResult;
+use crate::util;
 use crate::verdict::VerdictResult;
 
 pub fn print_header() {
@@ -138,7 +139,7 @@ fn render_speed(r: &serde_json::Value) {
         format!("{:<8}", "Download").dimmed(),
         bar(dl, scale, 20).cyan(),
         format!("{:.2} Mbps", dl).bold().cyan(),
-        format!("({:.1} MB)", dl_bytes as f64 / 1_048_576.0).dimmed()
+        format!("({:.1} MB)", util::bytes_to_mb(dl_bytes)).dimmed()
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
@@ -147,7 +148,25 @@ fn render_speed(r: &serde_json::Value) {
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
             format!("{:.2} Mbps", ul).bold().cyan(),
-            format!("({:.1} MB)", ul_bytes as f64 / 1_048_576.0).dimmed()
+            format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed()
+        );
+    }
+
+    let combined_dl = r.get("combined_download_mbps").and_then(|v| v.as_f64());
+    let combined_ul = r.get("combined_upload_mbps").and_then(|v| v.as_f64());
+    let combined_bytes = r
+        .get("combined_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if let (Some(cdl), Some(cul)) = (combined_dl, combined_ul) {
+        let total = cdl + cul;
+        println!(
+            "  {}   {}   {}   {}",
+            format!("{:<8}", "Combined").dimmed(),
+            bar(total, scale * 2.0, 20).cyan(),
+            format!("{:.2} Mbps", total).bold().cyan(),
+            format!("({:.1} MB)", util::bytes_to_mb(combined_bytes)).dimmed(),
         );
     }
 
