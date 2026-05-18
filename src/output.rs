@@ -122,7 +122,10 @@ fn render_speed(r: &serde_json::Value) {
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
     let ul = r.get("upload_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let dl_bytes = r.get("download_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+    let dl_bytes = r
+        .get("download_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let ul_bytes = r.get("upload_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
     let ping = r.get("ping_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let jitter = r.get("jitter_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);

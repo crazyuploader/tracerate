@@ -14,19 +14,41 @@ use clap::Parser;
     about = "A no-nonsense CLI internet speed tester"
 )]
 struct Cli {
-    #[arg(long, default_value_t = false, help = "Skip upload, bufferbloat, and regional latency tests")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Skip upload, bufferbloat, and regional latency tests"
+    )]
     quick: bool,
 
-    #[arg(long, default_value_t = 15.0, hide_default_value = true, help = "Duration in seconds for each download/upload measurement [default: 15s]")]
+    #[arg(
+        long,
+        default_value_t = 15.0,
+        hide_default_value = true,
+        help = "Duration in seconds for each download/upload measurement [default: 15s]"
+    )]
     duration: f64,
 
-    #[arg(long, default_value_t = 6, help = "Number of parallel streams for download/upload (more streams = higher saturation)")]
+    #[arg(
+        long,
+        default_value_t = 6,
+        help = "Number of parallel streams for download/upload (more streams = higher saturation)"
+    )]
     streams: usize,
 
-    #[arg(long, default_value = "pretty", help = "Output format: 'pretty' for human-readable, 'json' for machine-readable")]
+    #[arg(
+        long,
+        default_value = "pretty",
+        help = "Output format: 'pretty' for human-readable, 'json' for machine-readable"
+    )]
     output: String,
 
-    #[arg(short, long, default_value_t = false, help = "Show extra detail such as data transferred during bufferbloat test")]
+    #[arg(
+        short,
+        long,
+        default_value_t = false,
+        help = "Show extra detail such as data transferred during bufferbloat test"
+    )]
     verbose: bool,
 }
 
