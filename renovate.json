@@ -3,6 +3,10 @@
   "extends": ["config:recommended"],
   "labels": ["dependencies"],
   "prConcurrentLimit": 5,
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "ignoreTests": false,
   "cargo": {
     "enabled": true
   }
