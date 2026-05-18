@@ -111,15 +111,15 @@
             class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
             style="font-family: &quot;JetBrains Mono&quot;, monospace"
           ><span class="text-[#555]"># download</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-amd64 -o tracerate
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-amd64 -o tracerate-linux-amd64
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-amd64.sha256 -o tracerate-linux-amd64.sha256
 
 <span class="text-[#555]"># verify checksum</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-amd64.sha256 \
-  | sha256sum -c
+sha256sum -c tracerate-linux-amd64.sha256
 
 <span class="text-[#555]"># install</span>
-chmod +x tracerate
-sudo mv tracerate /usr/local/bin/tracerate
+chmod +x tracerate-linux-amd64
+sudo mv tracerate-linux-amd64 /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
@@ -155,15 +155,15 @@ tracerate</pre>
             class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
             style="font-family: &quot;JetBrains Mono&quot;, monospace"
           ><span class="text-[#555]"># download</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-arm64 -o tracerate
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-arm64 -o tracerate-linux-arm64
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-arm64.sha256 -o tracerate-linux-arm64.sha256
 
 <span class="text-[#555]"># verify checksum</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-arm64.sha256 \
-  | sha256sum -c
+sha256sum -c tracerate-linux-arm64.sha256
 
 <span class="text-[#555]"># install</span>
-chmod +x tracerate
-sudo mv tracerate /usr/local/bin/tracerate
+chmod +x tracerate-linux-arm64
+sudo mv tracerate-linux-arm64 /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
@@ -199,15 +199,15 @@ tracerate</pre>
             class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
             style="font-family: &quot;JetBrains Mono&quot;, monospace"
           ><span class="text-[#555]"># download</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-macos-arm64 -o tracerate
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-macos-arm64 -o tracerate-macos-arm64
+curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-macos-arm64.sha256 -o tracerate-macos-arm64.sha256
 
 <span class="text-[#555]"># verify checksum</span>
-curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-macos-arm64.sha256 \
-  | shasum -a 256 -c
+shasum -a 256 -c tracerate-macos-arm64.sha256
 
 <span class="text-[#555]"># install</span>
-chmod +x tracerate
-sudo mv tracerate /usr/local/bin/tracerate
+chmod +x tracerate-macos-arm64
+sudo mv tracerate-macos-arm64 /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
