@@ -90,6 +90,10 @@ jobs:
       size: medium
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - cargo-v1-windows-{{ checksum "Cargo.lock" }}
+            - cargo-v1-windows-
       - run:
           name: Install Rust
           shell: powershell.exe
@@ -105,6 +109,12 @@ jobs:
           command: |
             $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
             cargo build --release --locked
+      - save_cache:
+          key: cargo-v1-windows-{{ checksum "Cargo.lock" }}
+          paths:
+            - C:\Users\circleci\.cargo\registry
+            - C:\Users\circleci\.cargo\git
+            - target
 
 workflows:
   build-and-lint:
