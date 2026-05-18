@@ -145,3 +145,355 @@ pub fn analyze(
         issues: issue_list,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bufferbloat::BufferbloatResult;
+    use serde_json::json;
+
+    fn make_bb(delta_ms: f64, grade: &str) -> BufferbloatResult {
+        BufferbloatResult {
+            idle_ms: 10.0,
+            loaded_ms: 10.0 + delta_ms,
+            delta_ms,
+            grade: grade.to_string(),
+            data_used_mb: 5.0,
+        }
+    }
+
+    // --- analyze: summary path (diagnose) ---
+
+    #[test]
+    fn analyze_healthy_connection() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "Connection looks healthy.");
+        assert!(v.issues.is_empty());
+    }
+
+    #[test]
+    fn analyze_packet_loss_dominates_summary() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 10.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 10.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "Packet loss detected, connection is unstable.");
+    }
+
+    #[test]
+    fn analyze_severe_bufferbloat_in_summary() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(201.0, "F");
+        let v = analyze(&r, Some(&bb));
+        assert_eq!(v.summary, "Severe bufferbloat, router queue is overloaded.");
+    }
+
+    #[test]
+    fn analyze_high_latency_summary() {
+        let r = json!({
+            "download_mbps": 50.0,
+            "ping_ms": 120.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "High latency, likely congestion or poor routing.");
+    }
+
+    #[test]
+    fn analyze_high_jitter_summary() {
+        let r = json!({
+            "download_mbps": 50.0,
+            "ping_ms": 50.0,
+            "jitter_ms": 35.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "High jitter, connection is unstable.");
+    }
+
+    #[test]
+    fn analyze_low_bandwidth_summary() {
+        let r = json!({
+            "download_mbps": 5.0,
+            "ping_ms": 50.0,
+            "jitter_ms": 5.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "Low bandwidth, ISP speed is the bottleneck.");
+    }
+
+    // High ping only fires if download >= 10; below that, low bandwidth wins
+    #[test]
+    fn analyze_high_ping_below_10mbps_gives_low_bandwidth() {
+        let r = json!({
+            "download_mbps": 5.0,
+            "ping_ms": 150.0,
+            "jitter_ms": 0.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "Low bandwidth, ISP speed is the bottleneck.");
+    }
+
+    // --- analyze: upload_tested behavior ---
+
+    #[test]
+    fn analyze_no_upload_field_does_not_report_low_upload() {
+        // upload_mbps absent → upload_tested=false → no low-upload issue even though 0 < 10
+        let r = json!({
+            "download_mbps": 100.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(!v.issues.iter().any(|s| s.contains("Low upload")));
+    }
+
+    #[test]
+    fn analyze_upload_present_and_low_reports_issue() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 5.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("Low upload")));
+    }
+
+    #[test]
+    fn analyze_upload_at_threshold_10_mbps_not_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 10.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(!v.issues.iter().any(|s| s.contains("Low upload")));
+    }
+
+    // --- analyze: issues list ---
+
+    #[test]
+    fn analyze_low_download_reported_when_below_25() {
+        let r = json!({
+            "download_mbps": 10.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("Low download")));
+    }
+
+    #[test]
+    fn analyze_download_at_25_not_reported() {
+        let r = json!({
+            "download_mbps": 25.0,
+            "upload_mbps": 15.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(!v.issues.iter().any(|s| s.contains("Low download")));
+    }
+
+    #[test]
+    fn analyze_high_ping_reported_above_80() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 90.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("High ping")));
+    }
+
+    #[test]
+    fn analyze_ping_at_80_not_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 80.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(!v.issues.iter().any(|s| s.contains("High ping")));
+    }
+
+    #[test]
+    fn analyze_high_jitter_reported_above_20() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 25.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("High jitter")));
+    }
+
+    #[test]
+    fn analyze_packet_loss_reported_above_5() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 6.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("Packet loss")));
+    }
+
+    #[test]
+    fn analyze_packet_loss_at_5_not_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 5.0
+        });
+        let v = analyze(&r, None);
+        assert!(!v.issues.iter().any(|s| s.contains("Packet loss")));
+    }
+
+    #[test]
+    fn analyze_bufferbloat_grade_c_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(80.0, "C");
+        let v = analyze(&r, Some(&bb));
+        assert!(v.issues.iter().any(|s| s.contains("Bufferbloat grade")));
+    }
+
+    #[test]
+    fn analyze_bufferbloat_grade_d_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(150.0, "D");
+        let v = analyze(&r, Some(&bb));
+        assert!(v.issues.iter().any(|s| s.contains("Bufferbloat grade")));
+    }
+
+    #[test]
+    fn analyze_bufferbloat_grade_f_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(250.0, "F");
+        let v = analyze(&r, Some(&bb));
+        assert!(v.issues.iter().any(|s| s.contains("Bufferbloat grade")));
+    }
+
+    #[test]
+    fn analyze_bufferbloat_grade_a_not_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(5.0, "A");
+        let v = analyze(&r, Some(&bb));
+        assert!(!v.issues.iter().any(|s| s.contains("Bufferbloat grade")));
+    }
+
+    #[test]
+    fn analyze_bufferbloat_grade_b_not_reported() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 20.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let bb = make_bb(30.0, "B");
+        let v = analyze(&r, Some(&bb));
+        assert!(!v.issues.iter().any(|s| s.contains("Bufferbloat grade")));
+    }
+
+    // --- analyze: missing fields default gracefully ---
+
+    #[test]
+    fn analyze_missing_all_fields_defaults_to_low_bandwidth() {
+        // All fields absent → download=0, ping=0, jitter=0, loss=0 → download<10 fires
+        let r = json!({});
+        let v = analyze(&r, None);
+        assert_eq!(v.summary, "Low bandwidth, ISP speed is the bottleneck.");
+    }
+
+    #[test]
+    fn analyze_upload_zero_when_tested_reported() {
+        // upload_mbps present as 0 → upload_tested=true, 0 < 10 → reported
+        let r = json!({
+            "download_mbps": 100.0,
+            "upload_mbps": 0.0,
+            "ping_ms": 15.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("Low upload")));
+    }
+
+    // Regression: multiple issues can be reported simultaneously
+    #[test]
+    fn analyze_multiple_issues_reported_together() {
+        let r = json!({
+            "download_mbps": 10.0,
+            "upload_mbps": 5.0,
+            "ping_ms": 90.0,
+            "jitter_ms": 25.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert!(v.issues.iter().any(|s| s.contains("Low download")));
+        assert!(v.issues.iter().any(|s| s.contains("Low upload")));
+        assert!(v.issues.iter().any(|s| s.contains("High ping")));
+        assert!(v.issues.iter().any(|s| s.contains("High jitter")));
+    }
+}

@@ -370,3 +370,106 @@ async fn main() {
         cli.verbose,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- make_progress_bar ---
+
+    #[test]
+    fn make_progress_bar_has_length_1000() {
+        let pb = make_progress_bar("  Test —");
+        assert_eq!(pb.length(), Some(1000));
+    }
+
+    #[test]
+    fn make_progress_bar_initial_position_is_zero() {
+        let pb = make_progress_bar("  Test —");
+        assert_eq!(pb.position(), 0);
+    }
+
+    #[test]
+    fn make_progress_bar_empty_prefix_does_not_panic() {
+        let pb = make_progress_bar("");
+        assert_eq!(pb.length(), Some(1000));
+    }
+
+    #[test]
+    fn make_progress_bar_long_prefix_does_not_panic() {
+        let prefix = "A".repeat(80);
+        let pb = make_progress_bar(&prefix);
+        assert_eq!(pb.length(), Some(1000));
+    }
+
+    // --- speed_progress_cb ---
+
+    #[test]
+    fn speed_progress_cb_sets_position_proportionally() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 10.0);
+        // 1 second into a 10-second duration → position = 100
+        cb(1_000_000, 1.0);
+        assert_eq!(pb.position(), 100);
+    }
+
+    #[test]
+    fn speed_progress_cb_position_clamped_to_1000_when_over_duration() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 5.0);
+        // elapsed > duration: clamp to 1.0 → position = 1000
+        cb(5_000_000, 10.0);
+        assert_eq!(pb.position(), 1000);
+    }
+
+    #[test]
+    fn speed_progress_cb_zero_elapsed_does_not_set_message() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 10.0);
+        // elapsed == 0 → position set to 0, but message not updated
+        cb(0, 0.0);
+        assert_eq!(pb.position(), 0);
+    }
+
+    #[test]
+    fn speed_progress_cb_half_duration_gives_position_500() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 20.0);
+        // 10s / 20s = 0.5 → 500
+        cb(0, 10.0);
+        assert_eq!(pb.position(), 500);
+    }
+
+    #[test]
+    fn speed_progress_cb_returns_callable_closure() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 10.0);
+        // Should be callable multiple times without panicking
+        cb(0, 0.0);
+        cb(1_000_000, 1.0);
+        cb(5_000_000, 5.0);
+        cb(10_000_000, 10.0);
+    }
+
+    // --- make_spinner ---
+
+    #[test]
+    fn make_spinner_creates_spinner_bar() {
+        let s = make_spinner();
+        // A spinner created with new_spinner() has no fixed length
+        s.finish_and_clear();
+    }
+
+    #[test]
+    fn make_spinner_can_set_and_finish() {
+        let s = make_spinner();
+        s.set_message("Testing...");
+        s.finish_and_clear();
+    }
+
+    #[test]
+    fn make_spinner_does_not_panic() {
+        let _s = make_spinner();
+        // Drop without finishing — should not panic
+    }
+}

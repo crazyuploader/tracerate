@@ -391,3 +391,77 @@ pub async fn upload(
         bytes_transferred,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- build_client ---
+
+    #[test]
+    fn build_client_does_not_panic_with_small_timeout() {
+        let _client = build_client(1);
+    }
+
+    #[test]
+    fn build_client_does_not_panic_with_large_timeout() {
+        let _client = build_client(300);
+    }
+
+    #[test]
+    fn build_client_zero_timeout_does_not_panic() {
+        let _client = build_client(0);
+    }
+
+    // --- build_speed_client ---
+
+    #[test]
+    fn build_speed_client_does_not_panic() {
+        let _client = build_speed_client(30);
+    }
+
+    #[test]
+    fn build_speed_client_with_short_timeout() {
+        let _client = build_speed_client(5);
+    }
+
+    #[test]
+    fn build_speed_client_with_long_timeout() {
+        let _client = build_speed_client(120);
+    }
+
+    // Regression: multiple clients can be constructed independently
+    #[test]
+    fn build_multiple_clients_succeed() {
+        let _c1 = build_speed_client(10);
+        let _c2 = build_speed_client(20);
+        let _c3 = build_client(10);
+    }
+
+    // --- SERVER constant ---
+
+    #[test]
+    fn server_constant_name_is_cloudflare() {
+        assert_eq!(SERVER.name, "Cloudflare");
+    }
+
+    #[test]
+    fn server_constant_download_url_contains_placeholder() {
+        assert!(SERVER.download_url.contains("{bytes}"));
+    }
+
+    #[test]
+    fn server_constant_upload_url_is_nonempty() {
+        assert!(!SERVER.upload_url.is_empty());
+    }
+
+    #[test]
+    fn server_constant_port_is_nonzero() {
+        assert!(SERVER.port > 0);
+    }
+
+    #[test]
+    fn server_constant_host_is_nonempty() {
+        assert!(!SERVER.host.is_empty());
+    }
+}
