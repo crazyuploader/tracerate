@@ -2,8 +2,17 @@ use colored::Colorize;
 
 use crate::info::InfoResult;
 use crate::regional::RegionResult;
+use crate::util;
 use crate::verdict::VerdictResult;
 
+/// Prints a styled header for the tracerate CLI to stdout.
+///
+/// # Examples
+///
+/// ```
+/// // Produces a blank line, a styled "tracerate · network diagnostics" line, and another blank line.
+/// print_header();
+/// ```
 pub fn print_header() {
     println!();
     println!(
@@ -114,6 +123,34 @@ fn render_connection(info: &InfoResult, dns_ms: f64) {
     println!();
 }
 
+/// Renders the "Speed" diagnostic section from a JSON value and prints formatted, colored output to stdout.
+///
+/// Expects `r` to be a JSON object containing numeric fields typically produced by the speed test:
+/// `download_mbps`, `upload_mbps`, `download_bytes`, `upload_bytes`, `combined_download_mbps`,
+/// `combined_upload_mbps`, `combined_bytes`, `ping_ms`, `jitter_ms`, and `packet_loss`. Missing fields
+/// are treated as zero; upload and combined metrics are shown only when present.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+///
+/// let data = json!({
+///     "download_mbps": 85.3,
+///     "upload_mbps": 12.7,
+///     "download_bytes": 134217728,
+///     "upload_bytes": 67108864,
+///     "combined_download_mbps": 85.3,
+///     "combined_upload_mbps": 12.7,
+///     "combined_bytes": 201326592,
+///     "ping_ms": 12.34,
+///     "jitter_ms": 0.56,
+///     "packet_loss": 0.0
+/// });
+///
+/// // Prints the formatted Speed section to stdout
+/// render_speed(&data);
+/// ```
 fn render_speed(r: &serde_json::Value) {
     section("Speed");
 
@@ -138,7 +175,7 @@ fn render_speed(r: &serde_json::Value) {
         format!("{:<8}", "Download").dimmed(),
         bar(dl, scale, 20).cyan(),
         format!("{:.2} Mbps", dl).bold().cyan(),
-        format!("({:.1} MB)", dl_bytes as f64 / 1_048_576.0).dimmed()
+        format!("({:.1} MB)", util::bytes_to_mb(dl_bytes)).dimmed()
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
@@ -147,7 +184,25 @@ fn render_speed(r: &serde_json::Value) {
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
             format!("{:.2} Mbps", ul).bold().cyan(),
-            format!("({:.1} MB)", ul_bytes as f64 / 1_048_576.0).dimmed()
+            format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed()
+        );
+    }
+
+    let combined_dl = r.get("combined_download_mbps").and_then(|v| v.as_f64());
+    let combined_ul = r.get("combined_upload_mbps").and_then(|v| v.as_f64());
+    let combined_bytes = r
+        .get("combined_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if let (Some(cdl), Some(cul)) = (combined_dl, combined_ul) {
+        let total = cdl + cul;
+        println!(
+            "  {}   {}   {}   {}",
+            format!("{:<8}", "Combined").dimmed(),
+            bar(total, scale * 2.0, 20).cyan(),
+            format!("{:.2} Mbps", total).bold().cyan(),
+            format!("({:.1} MB)", util::bytes_to_mb(combined_bytes)).dimmed(),
         );
     }
 

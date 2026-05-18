@@ -2,22 +2,14 @@ use serde::Deserialize;
 use std::time::Instant;
 use tokio::net::lookup_host;
 
+use crate::util;
+
 #[derive(Debug, Deserialize)]
 pub struct IpInfoResponse {
     pub ip: Option<String>,
     pub city: Option<String>,
     pub country: Option<String>,
     pub org: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CloudflareMeta {
-    pub colo: Option<serde_json::Value>,
-    pub as_organization: Option<String>,
-    pub asn: Option<u64>,
-    pub city: Option<String>,
-    pub country: Option<String>,
-    pub client_ip: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -31,6 +23,21 @@ pub struct InfoResult {
     pub colo_city: Option<String>,
 }
 
+/// Gather public IP and network metadata from external services and consolidate it into an `InfoResult`.
+///
+/// Queries https://ipinfo.io/json and https://speed.cloudflare.com/meta, merges available fields
+/// (ip, isp, city, country, asn, colo, colo_city) from those services, and returns the combined result.
+/// Network or JSON parsing failures are ignored and leave any unavailable fields as `None`.
+///
+/// # Examples
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// let info = crate::info::get_ip_info().await;
+/// // info.ip, info.isp, info.city, etc. may be `Some(_)` or `None` depending on availability.
+/// println!("{:?}", info);
+/// # });
+/// ```
 pub async fn get_ip_info() -> InfoResult {
     let mut info = InfoResult {
         ip: None,
@@ -42,10 +49,7 @@ pub async fn get_ip_info() -> InfoResult {
         colo_city: None,
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .unwrap();
+    let client = crate::tester::build_client(5);
 
     if let Ok(response) = client.get("https://ipinfo.io/json").send().await {
         if response.status().is_success() {
@@ -68,9 +72,22 @@ pub async fn get_ip_info() -> InfoResult {
     }
 
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("User-Agent", "Mozilla/5.0".parse().unwrap());
-    headers.insert("Accept", "application/json".parse().unwrap());
-    headers.insert("Referer", "https://speed.cloudflare.com/".parse().unwrap());
+    headers.insert(
+        "User-Agent",
+        "Mozilla/5.0".parse().expect("invalid static header value"),
+    );
+    headers.insert(
+        "Accept",
+        "application/json"
+            .parse()
+            .expect("invalid static header value"),
+    );
+    headers.insert(
+        "Referer",
+        "https://speed.cloudflare.com/"
+            .parse()
+            .expect("invalid static header value"),
+    );
 
     if let Ok(response) = client
         .get("https://speed.cloudflare.com/meta")
@@ -132,17 +149,16 @@ pub async fn get_ip_info() -> InfoResult {
     info
 }
 
+/// Measure DNS lookup latency for a hostname in milliseconds.
+///
+/// The lookup duration is rounded to two decimal places; returns `0.0` if the lookup fails.
 pub async fn measure_dns(hostname: &str) -> f64 {
     let start = Instant::now();
     match lookup_host((hostname, 0)).await {
         Ok(_) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            round2(elapsed)
+            util::round2(elapsed)
         }
         Err(_) => 0.0,
     }
-}
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
 }

@@ -2,10 +2,10 @@ use futures::StreamExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::TcpStream;
 use tokio::task;
 
 use crate::tester;
+use crate::util;
 
 #[derive(serde::Serialize)]
 pub struct BufferbloatResult {
@@ -16,11 +16,29 @@ pub struct BufferbloatResult {
     pub data_used_mb: f64,
 }
 
+/// Measures TCP ping latency before and during concurrent download saturation and produces a `BufferbloatResult` summarizing idle and loaded latencies, their difference, a grade, and data transferred.
+///
+/// The function samples up to eight TCP pings to establish an idle baseline, then spawns `streams` concurrent download workers to saturate the link for the specified `duration` (in seconds) while sampling TCP ping latency under load. If no idle samples are obtained, the function returns a result with all numeric fields set to `0.0` and `grade` set to `"?"`. If no loaded samples are collected during the saturation window, the returned result contains the rounded idle latency and rounded data usage while `loaded_ms`, `delta_ms` are `0.0` and `grade` is `"?"`.
+///
+/// # Examples
+///
+/// ```
+/// # use tokio_test::block_on;
+/// # async fn run_example() {
+/// let result = super::measure_bufferbloat(3.0, 2).await;
+/// // basic invariant checks
+/// assert!(result.idle_ms >= 0.0);
+/// assert!(result.loaded_ms >= 0.0);
+/// assert!(result.delta_ms >= 0.0);
+/// assert!(result.data_used_mb >= 0.0);
+/// # }
+/// # block_on(run_example());
+/// ```
 pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatResult {
     // Idle baseline: average of 8 TCP pings before any load
     let mut idle_samples = Vec::new();
     for _ in 0..8 {
-        if let Some(ms) = tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
+        if let Some(ms) = tester::tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
             idle_samples.push(ms);
         }
     }
@@ -43,20 +61,7 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
     let total_bytes = Arc::new(AtomicU64::new(0));
     let mut saturate_handles = Vec::new();
 
-    // Create client once, shared across tasks (same pattern as download test)
-    let client = Arc::new(
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .default_headers({
-                let mut h = reqwest::header::HeaderMap::new();
-                for (k, v) in tester::REQUEST_HEADERS {
-                    h.insert(k, v.parse().unwrap());
-                }
-                h
-            })
-            .build()
-            .unwrap(),
-    );
+    let client = Arc::new(tester::build_speed_client(60));
 
     for _ in 0..streams {
         let stop_clone = stop.clone();
@@ -98,7 +103,7 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
     let end_time = Instant::now() + std::time::Duration::from_secs_f64(duration);
 
     while Instant::now() < end_time {
-        if let Some(ms) = tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
+        if let Some(ms) = tester::tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
             samples.push(ms);
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -113,11 +118,11 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
 
     if samples.is_empty() {
         return BufferbloatResult {
-            idle_ms: round2(idle),
+            idle_ms: util::round2(idle),
             loaded_ms: 0.0,
             delta_ms: 0.0,
             grade: "?".to_string(),
-            data_used_mb: round2(data_used_mb),
+            data_used_mb: util::round2(data_used_mb),
         };
     }
 
@@ -139,30 +144,10 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
     };
 
     BufferbloatResult {
-        idle_ms: round2(idle),
-        loaded_ms: round2(loaded),
-        delta_ms: round2(delta),
+        idle_ms: util::round2(idle),
+        loaded_ms: util::round2(loaded),
+        delta_ms: util::round2(delta),
         grade: grade.to_string(),
-        data_used_mb: round2(data_used_mb),
+        data_used_mb: util::round2(data_used_mb),
     }
-}
-
-async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
-    let start = Instant::now();
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        TcpStream::connect((host, port)),
-    )
-    .await
-    {
-        Ok(Ok(_)) => {
-            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            Some(elapsed)
-        }
-        _ => None,
-    }
-}
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
 }

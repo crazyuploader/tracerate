@@ -1,6 +1,6 @@
 # tracerate
 
-A no-nonsense CLI internet speed tester, written in Rust.
+A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate](https://github.com/rushil-b-patel/tracerate) by rushil-b-patel.
 
 ## What it measures
 
@@ -13,13 +13,15 @@ A no-nonsense CLI internet speed tester, written in Rust.
 
 ## Usage
 
-| Command                   | Description                                                 |
-| ------------------------- | ----------------------------------------------------------- |
-| `tracerate`               | Full test (download, upload, bufferbloat, regional latency) |
-| `tracerate --quick`       | Fast test (10s download only, skips upload and extras)      |
-| `tracerate --duration 30` | Custom download duration in seconds (default: 15)           |
-| `tracerate --streams 8`   | Parallel download streams (default: 6)                      |
-| `tracerate --output json` | Machine-readable JSON output                                |
+| Command                   | Description                                                    |
+| ------------------------- | -------------------------------------------------------------- |
+| `tracerate`               | Full test (download, upload, bufferbloat, regional latency)    |
+| `tracerate --quick`       | Fast test (10s download only, skips upload and extras)         |
+| `tracerate --combined`    | Add a simultaneous download+upload test after sequential tests |
+| `tracerate --duration 30` | Custom download/upload duration in seconds (default: 15)       |
+| `tracerate --streams 8`   | Parallel streams for download/upload (default: 6)              |
+| `tracerate --output json` | Machine-readable JSON output                                   |
+| `tracerate --verbose`     | Verbose output (e.g. data used during bufferbloat)             |
 
 ## Build from source
 

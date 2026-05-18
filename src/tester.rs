@@ -5,6 +5,8 @@ use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::task;
 
+use crate::util;
+
 pub struct Server {
     pub name: &'static str,
     pub download_url: &'static str,
@@ -21,7 +23,7 @@ pub const SERVER: Server = Server {
     port: 443,
 };
 
-pub const REQUEST_HEADERS: [(&str, &str); 3] = [
+const REQUEST_HEADERS: [(&str, &str); 3] = [
     ("User-Agent", "Mozilla/5.0"),
     ("Accept", "*/*"),
     ("Referer", "https://speed.cloudflare.com/"),
@@ -29,6 +31,72 @@ pub const REQUEST_HEADERS: [(&str, &str); 3] = [
 
 const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
+/// Builds a `reqwest::Client` configured with the given request timeout.
+///
+/// `timeout_secs` is the per-request timeout in seconds.
+///
+/// Panics if the client cannot be constructed.
+///
+/// # Examples
+///
+/// ```
+/// let client = build_client(30);
+/// // use `client` to make requests...
+/// ```
+pub fn build_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .expect("failed to build HTTP client")
+}
+
+/// Builds an HTTP client preconfigured with standard request headers and a request timeout.
+///
+/// The client's default headers are populated from `REQUEST_HEADERS`. If any static header
+/// value is invalid or the client builder fails, the function will panic.
+///
+/// # Examples
+///
+/// ```
+/// let client = build_speed_client(30);
+/// // use `client` to make requests...
+/// ```
+pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .default_headers({
+            let mut h = reqwest::header::HeaderMap::new();
+            for (k, v) in REQUEST_HEADERS {
+                h.insert(k, v.parse().expect("invalid static header value"));
+            }
+            h
+        })
+        .build()
+        .expect("failed to build HTTP client")
+}
+
+/// Measures TCP latency, packet loss, and jitter to a given host and port by performing multiple connection attempts.
+///
+/// Performs `attempts` sequential TCP connection attempts and aggregates the results:
+/// - `host` and `port` specify the target address to connect to.
+/// - `attempts` is the number of connection attempts to perform.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - `Option<f64>`: average round-trip time in milliseconds rounded to two decimals, or `None` if all attempts failed.
+/// - `f64`: packet loss percentage rounded to one decimal (`0.0`–`100.0`).
+/// - `Option<f64>`: jitter in milliseconds (difference between max and min successful latencies) rounded to two decimals, or `None` if no attempts succeeded.
+///
+/// # Examples
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// let (avg, loss, jitter) = crate::tester::ping("example.com", 80, 3).await;
+/// // avg and jitter are `Option<f64>`; loss is always a `f64`.
+/// assert!(loss >= 0.0 && loss <= 100.0);
+/// # });
+/// ```
 pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, Option<f64>) {
     let mut results = Vec::new();
 
@@ -52,10 +120,29 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, 
         });
     let jitter = jitter.1 - jitter.0;
 
-    (Some(round2(avg)), round1(loss), Some(round2(jitter)))
+    (
+        Some(util::round2(avg)),
+        util::round1(loss),
+        Some(util::round2(jitter)),
+    )
 }
 
-async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
+/// Measures a single TCP round-trip time to `host:port`.
+///
+/// # Returns
+///
+/// `Some(elapsed_ms)` with the elapsed time in milliseconds when the TCP connection completes successfully within 3 seconds, `None` on timeout or any connection error.
+///
+/// # Examples
+///
+/// ```
+/// // Run the async function using a small runtime.
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// let elapsed = rt.block_on(async { crate::tcp_ping_once("example.com", 80).await });
+/// // elapsed is either `None` (timeout/error) or a non-negative millisecond value
+/// assert!(elapsed.is_none() || elapsed.unwrap() >= 0.0);
+/// ```
+pub async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
     let start = Instant::now();
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -73,6 +160,39 @@ async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
 
 type ProgressCallback = Box<dyn Fn(u64, f64) + Send + Sync>;
 
+/// Measures download throughput by concurrently fetching a URL template across multiple streams for a fixed duration.
+///
+/// The `url_template` must contain the substring `"{bytes}"` which will be replaced with a large value to trigger a full-range download. The function spawns `streams` concurrent workers that read response bodies and accumulate received bytes; if `on_progress` is provided it will be invoked periodically with the current total bytes and elapsed seconds.
+///
+/// # Parameters
+///
+/// - `url_template`: URL template containing `"{bytes}"` to be substituted before requests.
+/// - `duration_s`: Measurement duration in seconds.
+/// - `streams`: Number of concurrent download streams to run.
+/// - `on_progress`: Optional callback invoked periodically as `cb(total_bytes, elapsed_secs)`.
+///
+/// # Returns
+///
+/// A tuple where the first element is the measured download speed in megabits per second (rounded to two decimal places) and the second element is the total number of bytes transferred during the measurement window.
+///
+/// # Examples
+///
+/// ```
+/// # use tester::{download};
+/// # use std::time::Duration;
+/// # use tokio;
+/// type ProgressCallback = fn(u64, f64);
+///
+/// #[tokio::test]
+/// async fn example_download() {
+///     // Use Cloudflare speed test template as an example.
+///     let template = "https://speed.cloudflare.com/__down?bytes={bytes}";
+///     let (mbps, bytes) = download(template, 1.0, 1, None).await;
+///     // Result is a tuple (mbps, bytes); values may be zero in constrained environments.
+///     assert!(bytes >= 0);
+///     assert!(mbps >= 0.0);
+/// }
+/// ```
 pub async fn download(
     url_template: &str,
     duration_s: f64,
@@ -80,18 +200,7 @@ pub async fn download(
     on_progress: Option<ProgressCallback>,
 ) -> (f64, u64) {
     let url = url_template.replace("{bytes}", "1000000000");
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            for (k, v) in REQUEST_HEADERS {
-                h.insert(k, v.parse().unwrap());
-            }
-            h
-        })
-        .build()
-        .unwrap();
+    let client = build_speed_client(30);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -166,10 +275,36 @@ pub async fn download(
         return (0.0, 0);
     }
 
-    let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    (round2(speed_mbps), bytes_transferred)
+    (
+        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
+        bytes_transferred,
+    )
 }
 
+/// Performs concurrent HTTP POST uploads of random data to the given `url` for approximately `duration_s`, using `streams` parallel workers and optionally reporting progress via `on_progress`.
+///
+/// The function spawns `streams` tasks that repeatedly POST 4 MiB chunks to `url`, measures bytes transferred during the measurement window, and returns the measured upload speed and total bytes.
+///
+/// # Parameters
+/// - `url`: destination upload endpoint.
+/// - `duration_s`: measurement duration in seconds.
+/// - `streams`: number of concurrent upload tasks.
+/// - `on_progress`: optional callback invoked periodically with `(bytes_uploaded, elapsed_seconds)`.
+///
+/// # Returns
+/// A tuple `(mbps, total_bytes)` where `mbps` is the measured upload speed in megabits per second (rounded to two decimals) and `total_bytes` is the total number of bytes uploaded.
+///
+/// # Examples
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use tokio;
+/// # async fn _run() {
+/// let (mbps, bytes) = crate::tester::upload("https://speed.cloudflare.com/__up", 1.0, 2, None).await;
+/// assert!(mbps >= 0.0);
+/// assert!(bytes >= 0);
+/// # }
+/// ```
 pub async fn upload(
     url: &str,
     duration_s: f64,
@@ -182,17 +317,7 @@ pub async fn upload(
             .collect(),
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .default_headers({
-            let mut h = reqwest::header::HeaderMap::new();
-            for (k, v) in REQUEST_HEADERS {
-                h.insert(k, v.parse().unwrap());
-            }
-            h
-        })
-        .build()
-        .unwrap();
+    let client = build_speed_client(60);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -261,14 +386,77 @@ pub async fn upload(
         return (0.0, 0);
     }
 
-    let speed_mbps = (bytes_transferred as f64 * 8.0) / elapsed / 1_000_000.0;
-    (round2(speed_mbps), bytes_transferred)
+    (
+        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
+        bytes_transferred,
+    )
 }
 
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn round1(v: f64) -> f64 {
-    (v * 10.0).round() / 10.0
+    // --- build_client ---
+
+    #[test]
+    fn build_client_does_not_panic_with_small_timeout() {
+        let _client = build_client(1);
+    }
+
+    #[test]
+    fn build_client_does_not_panic_with_large_timeout() {
+        let _client = build_client(300);
+    }
+
+    #[test]
+    fn build_client_zero_timeout_does_not_panic() {
+        let _client = build_client(0);
+    }
+
+    // --- build_speed_client ---
+
+    #[test]
+    fn build_speed_client_does_not_panic() {
+        let _client = build_speed_client(30);
+    }
+
+    #[test]
+    fn build_speed_client_with_short_timeout() {
+        let _client = build_speed_client(5);
+    }
+
+    #[test]
+    fn build_speed_client_with_long_timeout() {
+        let _client = build_speed_client(120);
+    }
+
+    // Regression: multiple clients can be constructed independently
+    #[test]
+    fn build_multiple_clients_succeed() {
+        let _c1 = build_speed_client(10);
+        let _c2 = build_speed_client(20);
+        let _c3 = build_client(10);
+    }
+
+    // --- SERVER constant ---
+
+    #[test]
+    fn server_constant_name_is_cloudflare() {
+        assert_eq!(SERVER.name, "Cloudflare");
+    }
+
+    #[test]
+    fn server_constant_download_url_contains_placeholder() {
+        assert!(SERVER.download_url.contains("{bytes}"));
+    }
+
+    #[test]
+    fn server_constant_upload_url_is_nonempty() {
+        assert!(!SERVER.upload_url.is_empty());
+    }
+
+    #[test]
+    fn server_constant_host_is_nonempty() {
+        assert!(!SERVER.host.is_empty());
+    }
 }
