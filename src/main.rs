@@ -61,6 +61,18 @@ struct Cli {
     verbose: bool,
 }
 
+/// Creates a progress bar prefixed with `prefix` and configured for throughput-style updates.
+///
+/// The returned `indicatif::ProgressBar` has a total length of 1000, uses a cyan 20-character
+/// bar with the given `prefix` followed by the current message, and is initialized with the
+/// message "…".
+///
+/// # Examples
+///
+/// ```
+/// let pb = make_progress_bar("  Downloading —");
+/// assert_eq!(pb.length(), Some(1000));
+/// ```
 fn make_progress_bar(prefix: &str) -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new(1000);
     pb.set_style(
@@ -73,6 +85,41 @@ fn make_progress_bar(prefix: &str) -> indicatif::ProgressBar {
     pb
 }
 
+/// Creates a callback that updates the given progress bar with throughput (Mbps) and elapsed time.
+
+///
+
+/// The returned closure takes `(bytes, elapsed_seconds)` and:
+
+/// - sets the bar position proportional to `elapsed_seconds / duration_s` (clamped to the bar range 0..=1000),
+
+/// - updates the bar message to "`{Mbps} Mbps  {seconds}s`" when `elapsed_seconds > 0`.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// use indicatif::ProgressBar;
+
+///
+
+/// let pb = ProgressBar::new(1000);
+
+/// let cb = speed_progress_cb(pb.clone(), 10.0);
+
+///
+
+/// // simulate 1_000_000 bytes after 1 second into a 10s duration
+
+/// cb(1_000_000, 1.0);
+
+/// assert_eq!(pb.position(), 100); // (1.0 / 10.0) * 1000 == 100
+
+/// ```
 fn speed_progress_cb(
     pb: indicatif::ProgressBar,
     duration_s: f64,
@@ -89,6 +136,17 @@ fn speed_progress_cb(
     })
 }
 
+/// Creates a spinner-style indicatif progress bar configured with a cyan spinner and message.
+///
+/// The spinner is set to tick steadily every 100 milliseconds.
+///
+/// # Examples
+///
+/// ```
+/// let spinner = make_spinner();
+/// spinner.set_message("Starting...");
+/// spinner.finish_and_clear();
+/// ```
 fn make_spinner() -> indicatif::ProgressBar {
     let s = indicatif::ProgressBar::new_spinner();
     s.set_style(
@@ -100,6 +158,19 @@ fn make_spinner() -> indicatif::ProgressBar {
     s
 }
 
+/// CLI entrypoint that runs the tracerate measurement flow and prints the results.
+///
+/// This function parses command-line arguments, performs latency, download, upload,
+/// optional combined, bufferbloat, and regional tests according to the CLI flags,
+/// assembles a JSON result and a human-friendly summary, and outputs either pretty
+/// formatted text or a JSON object depending on the `--output` option.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Run the compiled binary from a shell to execute the full measurement flow:
+/// // $ tracerate --quick --output json
+/// ```
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();

@@ -5,6 +5,14 @@ use crate::regional::RegionResult;
 use crate::util;
 use crate::verdict::VerdictResult;
 
+/// Prints a styled header for the tracerate CLI to stdout.
+///
+/// # Examples
+///
+/// ```
+/// // Produces a blank line, a styled "tracerate · network diagnostics" line, and another blank line.
+/// print_header();
+/// ```
 pub fn print_header() {
     println!();
     println!(
@@ -115,6 +123,34 @@ fn render_connection(info: &InfoResult, dns_ms: f64) {
     println!();
 }
 
+/// Renders the "Speed" diagnostic section from a JSON value and prints formatted, colored output to stdout.
+///
+/// Expects `r` to be a JSON object containing numeric fields typically produced by the speed test:
+/// `download_mbps`, `upload_mbps`, `download_bytes`, `upload_bytes`, `combined_download_mbps`,
+/// `combined_upload_mbps`, `combined_bytes`, `ping_ms`, `jitter_ms`, and `packet_loss`. Missing fields
+/// are treated as zero; upload and combined metrics are shown only when present.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+///
+/// let data = json!({
+///     "download_mbps": 85.3,
+///     "upload_mbps": 12.7,
+///     "download_bytes": 134217728,
+///     "upload_bytes": 67108864,
+///     "combined_download_mbps": 85.3,
+///     "combined_upload_mbps": 12.7,
+///     "combined_bytes": 201326592,
+///     "ping_ms": 12.34,
+///     "jitter_ms": 0.56,
+///     "packet_loss": 0.0
+/// });
+///
+/// // Prints the formatted Speed section to stdout
+/// render_speed(&data);
+/// ```
 fn render_speed(r: &serde_json::Value) {
     section("Speed");
 

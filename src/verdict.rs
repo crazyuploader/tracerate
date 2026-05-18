@@ -25,6 +25,24 @@ fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta:
     "Connection looks healthy.".to_string()
 }
 
+/// Builds a list of human-readable issue messages based on measured network metrics and bufferbloat grade.
+///
+/// The returned list contains zero or more short diagnostic strings for conditions that exceed predefined thresholds.
+///
+/// Parameters:
+/// - `upload`: optional measured upload speed in Mbps; `None` means upload was not measured.
+/// - `upload_tested`: `true` if an upload measurement was attempted and `upload` should be considered; when `false`, low-upload is not reported even if `upload` is `None`.
+///
+/// # Returns
+/// A `Vec<String>` with one message per detected issue; empty if no issues were detected.
+///
+/// # Examples
+///
+/// ```
+/// let msgs = issues(12.0, Some(5.0), true, 50.0, 10.0, 0.0, "B");
+/// assert!(msgs.contains(&"Low download: 12 Mbps".to_string()));
+/// assert!(msgs.contains(&"Low upload: 5 Mbps".to_string()));
+/// ```
 fn issues(
     download: f64,
     upload: Option<f64>,
@@ -58,6 +76,33 @@ fn issues(
     list
 }
 
+/// Create a human-readable verdict and list of issues from test metrics and optional bufferbloat results.
+///
+/// Arguments:
+/// - `result`: JSON object containing test metrics (e.g., `download_mbps`, `upload_mbps`, `ping_ms`, `jitter_ms`, `packet_loss`). Missing numeric fields default to 0.0; presence of `upload_mbps` is used to determine whether upload was tested.
+/// - `bufferbloat`: Optional bufferbloat analysis used to supply `delta_ms` and `grade` for bufferbloat-related diagnostics.
+///
+/// # Returns
+/// A `VerdictResult` containing:
+/// - `summary`: a single-sentence verdict derived from the provided metrics and bufferbloat delta.
+/// - `issues`: a vector of human-readable issue messages based on thresholds and available measurements.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+/// let result = json!({
+///     "download_mbps": 50.0,
+///     "upload_mbps": 5.0,
+///     "ping_ms": 30.0,
+///     "jitter_ms": 5.0,
+///     "packet_loss": 0.0
+/// });
+/// // No bufferbloat data available
+/// let verdict = crate::verdict::analyze(&result, None);
+/// assert!(verdict.summary.len() > 0);
+/// assert!(verdict.issues.iter().any(|s| s.contains("Low upload")));
+/// ```
 pub fn analyze(
     result: &Value,
     bufferbloat: Option<&crate::bufferbloat::BufferbloatResult>,

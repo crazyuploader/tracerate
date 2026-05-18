@@ -92,6 +92,17 @@ pub async fn ping_regions() -> Vec<RegionResult> {
     results
 }
 
+/// Measure TCP connection latency to a host over multiple attempts and return the best result.
+///
+/// Returns the minimum successful TCP connection time in milliseconds, rounded to two decimal places; returns `0.0` if no attempts succeeded.
+///
+/// # Examples
+///
+/// ```
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// let ms = rt.block_on(tcp_ping("example.com", 443, 1));
+/// assert!(ms >= 0.0);
+/// ```
 async fn tcp_ping(host: &str, port: u16, attempts: usize) -> f64 {
     let mut samples = Vec::new();
 

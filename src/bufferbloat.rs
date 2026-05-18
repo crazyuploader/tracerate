@@ -16,6 +16,24 @@ pub struct BufferbloatResult {
     pub data_used_mb: f64,
 }
 
+/// Measures TCP ping latency before and during concurrent download saturation and produces a `BufferbloatResult` summarizing idle and loaded latencies, their difference, a grade, and data transferred.
+///
+/// The function samples up to eight TCP pings to establish an idle baseline, then spawns `streams` concurrent download workers to saturate the link for the specified `duration` (in seconds) while sampling TCP ping latency under load. If no idle samples are obtained, the function returns a result with all numeric fields set to `0.0` and `grade` set to `"?"`. If no loaded samples are collected during the saturation window, the returned result contains the rounded idle latency and rounded data usage while `loaded_ms`, `delta_ms` are `0.0` and `grade` is `"?"`.
+///
+/// # Examples
+///
+/// ```
+/// # use tokio_test::block_on;
+/// # async fn run_example() {
+/// let result = super::measure_bufferbloat(3.0, 2).await;
+/// // basic invariant checks
+/// assert!(result.idle_ms >= 0.0);
+/// assert!(result.loaded_ms >= 0.0);
+/// assert!(result.delta_ms >= 0.0);
+/// assert!(result.data_used_mb >= 0.0);
+/// # }
+/// # block_on(run_example());
+/// ```
 pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatResult {
     // Idle baseline: average of 8 TCP pings before any load
     let mut idle_samples = Vec::new();

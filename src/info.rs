@@ -23,6 +23,21 @@ pub struct InfoResult {
     pub colo_city: Option<String>,
 }
 
+/// Gather public IP and network metadata from external services and consolidate it into an `InfoResult`.
+///
+/// Queries https://ipinfo.io/json and https://speed.cloudflare.com/meta, merges available fields
+/// (ip, isp, city, country, asn, colo, colo_city) from those services, and returns the combined result.
+/// Network or JSON parsing failures are ignored and leave any unavailable fields as `None`.
+///
+/// # Examples
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// let info = crate::info::get_ip_info().await;
+/// // info.ip, info.isp, info.city, etc. may be `Some(_)` or `None` depending on availability.
+/// println!("{:?}", info);
+/// # });
+/// ```
 pub async fn get_ip_info() -> InfoResult {
     let mut info = InfoResult {
         ip: None,
@@ -134,6 +149,29 @@ pub async fn get_ip_info() -> InfoResult {
     info
 }
 
+/// Measure DNS lookup latency for a hostname in milliseconds.
+
+///
+
+/// The lookup duration is rounded to two decimal places; returns `0.0` if the lookup fails.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// # async fn docs() {
+
+/// let ms = measure_dns("example.com").await;
+
+/// assert!(ms >= 0.0);
+
+/// # }
+
+/// ```
 pub async fn measure_dns(hostname: &str) -> f64 {
     let start = Instant::now();
     match lookup_host((hostname, 0)).await {
