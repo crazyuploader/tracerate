@@ -1,61 +1,116 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>tracerate</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
-</head>
-<body class="bg-[#0a0a0a] text-[#e5e5e5] min-h-screen flex items-center justify-center px-4 py-16" style="font-family: 'Inter', sans-serif;">
-
-  <div class="w-full max-w-2xl">
-
-    <!-- Header -->
-    <div class="mb-10">
-      <div class="flex items-center gap-2 mb-3">
-        <span class="text-[11px] font-medium tracking-widest text-[#555] uppercase" style="font-family: 'JetBrains Mono', monospace;">cli tool</span>
-      </div>
-      <h1 class="text-3xl font-semibold tracking-tight text-white mb-2">tracerate</h1>
-      <p class="text-[#666] text-sm font-light">A no-nonsense CLI internet speed tester.</p>
-    </div>
-
-    <!-- Platform Tabs -->
-    <div class="flex gap-1 mb-1 border-b border-[#1a1a1a] pb-0">
-      <button onclick="switchTab('linux-amd64')" id="tab-linux-amd64"
-        class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-white text-white transition-colors"
-        style="font-family: 'JetBrains Mono', monospace; margin-bottom: -1px;">
-        Linux AMD64
-      </button>
-      <button onclick="switchTab('linux-arm64')" id="tab-linux-arm64"
-        class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
-        style="font-family: 'JetBrains Mono', monospace; margin-bottom: -1px;">
-        Linux ARM64
-      </button>
-      <button onclick="switchTab('macos')" id="tab-macos"
-        class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
-        style="font-family: 'JetBrains Mono', monospace; margin-bottom: -1px;">
-        macOS ARM64
-      </button>
-      <button onclick="switchTab('windows')" id="tab-windows"
-        class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
-        style="font-family: 'JetBrains Mono', monospace; margin-bottom: -1px;">
-        Windows AMD64
-      </button>
-    </div>
-
-    <!-- Code Blocks -->
-    <div id="panel-linux-amd64" class="tab-panel">
-      <div class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0">
-        <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]">
-          <span class="text-[10px] tracking-widest uppercase text-[#444]" style="font-family: 'JetBrains Mono', monospace;">bash</span>
-          <button onclick="copyCode('code-linux-amd64')" class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]" style="font-family: 'JetBrains Mono', monospace;">
-            <i data-lucide="copy" style="width:13px;height:13px;stroke-width:1.5"></i>
-            <span id="copy-label-linux-amd64">copy</span>
-          </button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>tracerate</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body
+    class="bg-[#0a0a0a] text-[#e5e5e5] min-h-screen flex items-center justify-center px-4 py-16"
+    style="font-family: &quot;Inter&quot;, sans-serif"
+  >
+    <div class="w-full max-w-2xl">
+      <!-- Header -->
+      <div class="mb-10">
+        <div class="flex items-center gap-2 mb-3">
+          <span
+            class="text-[11px] font-medium tracking-widest text-[#555] uppercase"
+            style="font-family: &quot;JetBrains Mono&quot;, monospace"
+            >cli tool</span
+          >
         </div>
-        <pre id="code-linux-amd64" class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]" style="font-family: 'JetBrains Mono', monospace;"><span class="text-[#555]"># download</span>
+        <h1 class="text-3xl font-semibold tracking-tight text-white mb-2">
+          tracerate
+        </h1>
+        <p class="text-[#666] text-sm font-light">
+          A no-nonsense CLI internet speed tester.
+        </p>
+      </div>
+
+      <!-- Platform Tabs -->
+      <div class="flex gap-1 mb-1 border-b border-[#1a1a1a] pb-0">
+        <button
+          onclick="switchTab('linux-amd64')"
+          id="tab-linux-amd64"
+          class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-white text-white transition-colors"
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            margin-bottom: -1px;
+          "
+        >
+          Linux AMD64
+        </button>
+        <button
+          onclick="switchTab('linux-arm64')"
+          id="tab-linux-arm64"
+          class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            margin-bottom: -1px;
+          "
+        >
+          Linux ARM64
+        </button>
+        <button
+          onclick="switchTab('macos')"
+          id="tab-macos"
+          class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            margin-bottom: -1px;
+          "
+        >
+          macOS ARM64
+        </button>
+        <button
+          onclick="switchTab('windows')"
+          id="tab-windows"
+          class="tab-btn px-3 py-2 text-xs font-medium border-b-2 border-transparent text-[#555] hover:text-[#999] transition-colors"
+          style="
+            font-family: &quot;JetBrains Mono&quot;, monospace;
+            margin-bottom: -1px;
+          "
+        >
+          Windows AMD64
+        </button>
+      </div>
+
+      <!-- Code Blocks -->
+      <div id="panel-linux-amd64" class="tab-panel">
+        <div
+          class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
+        >
+          <div
+            class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]"
+          >
+            <span
+              class="text-[10px] tracking-widest uppercase text-[#444]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+              >bash</span
+            >
+            <button
+              onclick="copyCode('code-linux-amd64')"
+              class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+            >
+              <i
+                data-lucide="copy"
+                style="width: 13px; height: 13px; stroke-width: 1.5"
+              ></i>
+              <span id="copy-label-linux-amd64">copy</span>
+            </button>
+          </div>
+          <pre
+            id="code-linux-amd64"
+            class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
+            style="font-family: &quot;JetBrains Mono&quot;, monospace"
+          ><span class="text-[#555]"># download</span>
 curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-amd64 -o tracerate
 
 <span class="text-[#555]"># verify checksum</span>
@@ -68,19 +123,38 @@ sudo mv tracerate /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
-      </div>
-    </div>
-
-    <div id="panel-linux-arm64" class="tab-panel hidden">
-      <div class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0">
-        <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]">
-          <span class="text-[10px] tracking-widest uppercase text-[#444]" style="font-family: 'JetBrains Mono', monospace;">bash</span>
-          <button onclick="copyCode('code-linux-arm64')" class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]" style="font-family: 'JetBrains Mono', monospace;">
-            <i data-lucide="copy" style="width:13px;height:13px;stroke-width:1.5"></i>
-            <span id="copy-label-linux-arm64">copy</span>
-          </button>
         </div>
-        <pre id="code-linux-arm64" class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]" style="font-family: 'JetBrains Mono', monospace;"><span class="text-[#555]"># download</span>
+      </div>
+
+      <div id="panel-linux-arm64" class="tab-panel hidden">
+        <div
+          class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
+        >
+          <div
+            class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]"
+          >
+            <span
+              class="text-[10px] tracking-widest uppercase text-[#444]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+              >bash</span
+            >
+            <button
+              onclick="copyCode('code-linux-arm64')"
+              class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+            >
+              <i
+                data-lucide="copy"
+                style="width: 13px; height: 13px; stroke-width: 1.5"
+              ></i>
+              <span id="copy-label-linux-arm64">copy</span>
+            </button>
+          </div>
+          <pre
+            id="code-linux-arm64"
+            class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
+            style="font-family: &quot;JetBrains Mono&quot;, monospace"
+          ><span class="text-[#555]"># download</span>
 curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-linux-arm64 -o tracerate
 
 <span class="text-[#555]"># verify checksum</span>
@@ -93,19 +167,38 @@ sudo mv tracerate /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
-      </div>
-    </div>
-
-    <div id="panel-macos" class="tab-panel hidden">
-      <div class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0">
-        <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]">
-          <span class="text-[10px] tracking-widest uppercase text-[#444]" style="font-family: 'JetBrains Mono', monospace;">bash</span>
-          <button onclick="copyCode('code-macos')" class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]" style="font-family: 'JetBrains Mono', monospace;">
-            <i data-lucide="copy" style="width:13px;height:13px;stroke-width:1.5"></i>
-            <span id="copy-label-macos">copy</span>
-          </button>
         </div>
-        <pre id="code-macos" class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]" style="font-family: 'JetBrains Mono', monospace;"><span class="text-[#555]"># download</span>
+      </div>
+
+      <div id="panel-macos" class="tab-panel hidden">
+        <div
+          class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
+        >
+          <div
+            class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]"
+          >
+            <span
+              class="text-[10px] tracking-widest uppercase text-[#444]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+              >bash</span
+            >
+            <button
+              onclick="copyCode('code-macos')"
+              class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+            >
+              <i
+                data-lucide="copy"
+                style="width: 13px; height: 13px; stroke-width: 1.5"
+              ></i>
+              <span id="copy-label-macos">copy</span>
+            </button>
+          </div>
+          <pre
+            id="code-macos"
+            class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
+            style="font-family: &quot;JetBrains Mono&quot;, monospace"
+          ><span class="text-[#555]"># download</span>
 curl -fsSL https://executables.devjugal.com/tracerate/latest/tracerate-macos-arm64 -o tracerate
 
 <span class="text-[#555]"># verify checksum</span>
@@ -118,19 +211,38 @@ sudo mv tracerate /usr/local/bin/tracerate
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
-      </div>
-    </div>
-
-    <div id="panel-windows" class="tab-panel hidden">
-      <div class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0">
-        <div class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]">
-          <span class="text-[10px] tracking-widest uppercase text-[#444]" style="font-family: 'JetBrains Mono', monospace;">powershell</span>
-          <button onclick="copyCode('code-windows')" class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]" style="font-family: 'JetBrains Mono', monospace;">
-            <i data-lucide="copy" style="width:13px;height:13px;stroke-width:1.5"></i>
-            <span id="copy-label-windows">copy</span>
-          </button>
         </div>
-        <pre id="code-windows" class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]" style="font-family: 'JetBrains Mono', monospace;"><span class="text-[#555]"># download</span>
+      </div>
+
+      <div id="panel-windows" class="tab-panel hidden">
+        <div
+          class="relative bg-[#111] border border-[#1f1f1f] rounded-b-lg rounded-tr-lg mt-0"
+        >
+          <div
+            class="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a1a1a]"
+          >
+            <span
+              class="text-[10px] tracking-widest uppercase text-[#444]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+              >powershell</span
+            >
+            <button
+              onclick="copyCode('code-windows')"
+              class="flex items-center gap-1.5 text-[#444] hover:text-[#aaa] transition-colors text-[11px]"
+              style="font-family: &quot;JetBrains Mono&quot;, monospace"
+            >
+              <i
+                data-lucide="copy"
+                style="width: 13px; height: 13px; stroke-width: 1.5"
+              ></i>
+              <span id="copy-label-windows">copy</span>
+            </button>
+          </div>
+          <pre
+            id="code-windows"
+            class="px-4 py-4 text-[13px] leading-6 overflow-x-auto text-[#c9c9c9]"
+            style="font-family: &quot;JetBrains Mono&quot;, monospace"
+          ><span class="text-[#555]"># download</span>
 Invoke-WebRequest -Uri "https://executables.devjugal.com/tracerate/latest/tracerate-windows-amd64.exe" `
   -OutFile tracerate.exe
 
@@ -144,41 +256,50 @@ Move-Item tracerate.exe "$env:USERPROFILE\AppData\Local\Microsoft\WindowsApps\tr
 
 <span class="text-[#555]"># run</span>
 tracerate</pre>
+        </div>
       </div>
+
+      <!-- Footer note -->
+      <p
+        class="mt-6 text-[11px] text-[#333]"
+        style="font-family: &quot;JetBrains Mono&quot;, monospace"
+      >
+        built from
+        <a
+          href="https://github.com/crazyuploader/tracerate"
+          class="text-[#444] hover:text-[#777] transition-colors underline underline-offset-2"
+          >github.com/crazyuploader/tracerate</a
+        >
+      </p>
     </div>
 
-    <!-- Footer note -->
-    <p class="mt-6 text-[11px] text-[#333]" style="font-family: 'JetBrains Mono', monospace;">
-      built from <a href="https://github.com/crazyuploader/tracerate" class="text-[#444] hover:text-[#777] transition-colors underline underline-offset-2">github.com/crazyuploader/tracerate</a>
-    </p>
+    <script>
+      lucide.createIcons();
 
-  </div>
+      function switchTab(id) {
+        document
+          .querySelectorAll(".tab-panel")
+          .forEach((p) => p.classList.add("hidden"));
+        document.querySelectorAll(".tab-btn").forEach((b) => {
+          b.classList.remove("border-white", "text-white");
+          b.classList.add("border-transparent", "text-[#555]");
+        });
+        document.getElementById("panel-" + id).classList.remove("hidden");
+        const btn = document.getElementById("tab-" + id);
+        btn.classList.add("border-white", "text-white");
+        btn.classList.remove("border-transparent", "text-[#555]");
+      }
 
-  <script>
-    lucide.createIcons();
-
-    function switchTab(id) {
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
-      document.querySelectorAll('.tab-btn').forEach(b => {
-        b.classList.remove('border-white', 'text-white');
-        b.classList.add('border-transparent', 'text-[#555]');
-      });
-      document.getElementById('panel-' + id).classList.remove('hidden');
-      const btn = document.getElementById('tab-' + id);
-      btn.classList.add('border-white', 'text-white');
-      btn.classList.remove('border-transparent', 'text-[#555]');
-    }
-
-    function copyCode(id) {
-      const pre = document.getElementById(id);
-      const text = pre.innerText;
-      navigator.clipboard.writeText(text).then(() => {
-        const platform = id.replace('code-', '');
-        const label = document.getElementById('copy-label-' + platform);
-        label.textContent = 'copied';
-        setTimeout(() => label.textContent = 'copy', 1800);
-      });
-    }
-  </script>
-</body>
+      function copyCode(id) {
+        const pre = document.getElementById(id);
+        const text = pre.innerText;
+        navigator.clipboard.writeText(text).then(() => {
+          const platform = id.replace("code-", "");
+          const label = document.getElementById("copy-label-" + platform);
+          label.textContent = "copied";
+          setTimeout(() => (label.textContent = "copy"), 1800);
+        });
+      }
+    </script>
+  </body>
 </html>

@@ -116,7 +116,13 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
+          # /tracerate/index.html — explicit path
           aws s3 cp index.html s3://${{ secrets.R2_BUCKET_NAME }}/tracerate/index.html \
+            --content-type "text/html" \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+            --region auto
+          # /tracerate — directory path (R2 has no auto index.html serving)
+          aws s3 cp index.html s3://${{ secrets.R2_BUCKET_NAME }}/tracerate \
             --content-type "text/html" \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
             --region auto
