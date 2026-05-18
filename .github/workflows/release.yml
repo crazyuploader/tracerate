@@ -66,17 +66,24 @@ jobs:
 
       - name: Stage binary (Unix)
         if: runner.os != 'Windows'
-        run: cp target/${{ matrix.target }}/release/tracerate ${{ matrix.artifact }}
+        run: |
+          cp target/${{ matrix.target }}/release/tracerate ${{ matrix.artifact }}
+          sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
 
       - name: Stage binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cp target/${{ matrix.target }}/release/tracerate.exe ${{ matrix.artifact }}
+        run: |
+          cp target/${{ matrix.target }}/release/tracerate.exe ${{ matrix.artifact }}
+          $hash = (Get-FileHash ${{ matrix.artifact }} -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}" | Out-File -Encoding ascii ${{ matrix.artifact }}.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
           if-no-files-found: error
 
   publish:
@@ -84,6 +91,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -92,12 +101,22 @@ jobs:
       - name: List artifacts
         run: ls -lh artifacts/
 
-      - name: Upload to R2
+      - name: Upload binaries to R2
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           aws s3 cp artifacts/ s3://${{ secrets.R2_BUCKET_NAME }}/tracerate/latest/ \
             --recursive \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+            --region auto
+
+      - name: Upload index.html to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 cp index.html s3://${{ secrets.R2_BUCKET_NAME }}/tracerate/index.html \
+            --content-type "text/html" \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
             --region auto
