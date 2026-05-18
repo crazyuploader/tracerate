@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpStream;
@@ -13,6 +13,7 @@ pub struct BufferbloatResult {
     pub loaded_ms: f64,
     pub delta_ms: f64,
     pub grade: String,
+    pub data_used_mb: f64,
 }
 
 pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatResult {
@@ -30,6 +31,7 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
             loaded_ms: 0.0,
             delta_ms: 0.0,
             grade: "?".to_string(),
+            data_used_mb: 0.0,
         };
     }
 
@@ -38,18 +40,31 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
     // Saturate with multiple concurrent download streams
     let url = tester::SERVER.download_url.replace("{bytes}", "200000000");
     let stop = Arc::new(AtomicBool::new(false));
+    let total_bytes = Arc::new(AtomicU64::new(0));
     let mut saturate_handles = Vec::new();
+
+    // Create client once, shared across tasks (same pattern as download test)
+    let client = Arc::new(
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .default_headers({
+                let mut h = reqwest::header::HeaderMap::new();
+                for (k, v) in tester::REQUEST_HEADERS {
+                    h.insert(k, v.parse().unwrap());
+                }
+                h
+            })
+            .build()
+            .unwrap(),
+    );
 
     for _ in 0..streams {
         let stop_clone = stop.clone();
         let url_clone = url.clone();
+        let bytes_clone = total_bytes.clone();
+        let client = client.clone();
 
         let handle = task::spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .unwrap();
-
             loop {
                 if stop_clone.load(Ordering::Relaxed) {
                     break;
@@ -65,7 +80,9 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
                     if stop_clone.load(Ordering::Relaxed) {
                         break;
                     }
-                    let _ = chunk;
+                    if let Ok(c) = chunk {
+                        bytes_clone.fetch_add(c.len() as u64, Ordering::Relaxed);
+                    }
                 }
             }
         });
@@ -92,12 +109,15 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
         let _ = handle.await;
     }
 
+    let data_used_mb = total_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
+
     if samples.is_empty() {
         return BufferbloatResult {
             idle_ms: round2(idle),
             loaded_ms: 0.0,
             delta_ms: 0.0,
             grade: "?".to_string(),
+            data_used_mb: round2(data_used_mb),
         };
     }
 
@@ -123,6 +143,7 @@ pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatRe
         loaded_ms: round2(loaded),
         delta_ms: round2(delta),
         grade: grade.to_string(),
+        data_used_mb: round2(data_used_mb),
     }
 }
 

@@ -35,12 +35,13 @@ pub fn render(
     bb: Option<&crate::bufferbloat::BufferbloatResult>,
     regions: Option<&[RegionResult]>,
     summary: &VerdictResult,
+    verbose: bool,
 ) {
     render_connection(info, dns_ms);
     render_speed(r);
 
     if let Some(bb) = bb {
-        render_bufferbloat(bb);
+        render_bufferbloat(bb, verbose);
     }
 
     if let Some(regions) = regions {
@@ -163,7 +164,7 @@ fn render_speed(r: &serde_json::Value) {
     println!();
 }
 
-fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
+fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult, verbose: bool) {
     section("Bufferbloat");
 
     let grade_color = match bb.grade.as_str() {
@@ -196,6 +197,13 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
         "Grade".dimmed(),
         grade_str
     );
+    if verbose {
+        println!(
+            "  {}   {:.1} MB used",
+            format!("{:<6}", "Data").dimmed(),
+            bb.data_used_mb
+        );
+    }
     println!();
 }
 

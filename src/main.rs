@@ -25,6 +25,9 @@ struct Cli {
 
     #[arg(long, default_value = "pretty")]
     output: String,
+
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 }
 
 #[tokio::main]
@@ -212,5 +215,6 @@ async fn main() {
         bufferbloat.as_ref(),
         regions.as_deref(),
         &summary,
+        cli.verbose,
     );
 }

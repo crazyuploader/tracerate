@@ -21,7 +21,7 @@ pub const SERVER: Server = Server {
     port: 443,
 };
 
-const REQUEST_HEADERS: [(&str, &str); 3] = [
+pub const REQUEST_HEADERS: [(&str, &str); 3] = [
     ("User-Agent", "Mozilla/5.0"),
     ("Accept", "*/*"),
     ("Referer", "https://speed.cloudflare.com/"),
