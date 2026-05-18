@@ -247,7 +247,8 @@ Invoke-WebRequest -Uri "https://executables.devjugal.com/tracerate/latest/tracer
   -OutFile tracerate.exe
 
 <span class="text-[#555]"># verify checksum</span>
-$expected = (Invoke-WebRequest -Uri "https://executables.devjugal.com/tracerate/latest/tracerate-windows-amd64.exe.sha256").Content.Trim().Split()[0]
+$r = Invoke-WebRequest -Uri "https://executables.devjugal.com/tracerate/latest/tracerate-windows-amd64.exe.sha256" -UseBasicParsing
+$expected = [System.Text.Encoding]::UTF8.GetString($r.Content).Trim().Split()[0]
 $actual = (Get-FileHash tracerate.exe -Algorithm SHA256).Hash.ToLower()
 if ($expected -ne $actual) { throw "checksum mismatch" }
 

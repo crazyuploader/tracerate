@@ -140,6 +140,9 @@ fn make_spinner() -> indicatif::ProgressBar {
 async fn main() {
     let cli = Cli::parse();
 
+    #[cfg(windows)]
+    colored::control::set_virtual_terminal(true).ok();
+
     if cli.quick && cli.combined {
         eprintln!(
             "error: --combined cannot be used with --quick (upload is skipped in quick mode)"
