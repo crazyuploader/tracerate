@@ -31,6 +31,10 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             archive: tracerate_Darwin_arm64.tar.gz
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tracerate_Darwin_x86_64.tar.gz
           - name: Windows AMD64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -105,6 +109,7 @@ jobs:
         working-directory: dist
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          SHA_DARWIN_INTEL=$(sha256sum tracerate_Darwin_x86_64.tar.gz | cut -d' ' -f1)
           SHA_DARWIN_ARM=$(sha256sum tracerate_Darwin_arm64.tar.gz | cut -d' ' -f1)
           SHA_LINUX_INTEL=$(sha256sum tracerate_Linux_x86_64.tar.gz | cut -d' ' -f1)
           SHA_LINUX_ARM=$(sha256sum tracerate_Linux_arm64.tar.gz | cut -d' ' -f1)
@@ -115,6 +120,10 @@ jobs:
             version "${VERSION}"
 
             on_macos do
+              on_intel do
+                sha256 "${SHA_DARWIN_INTEL}"
+                url "https://github.com/crazyuploader/tracerate/releases/download/v#{version}/tracerate_Darwin_x86_64.tar.gz"
+              end
               on_arm do
                 sha256 "${SHA_DARWIN_ARM}"
                 url "https://github.com/crazyuploader/tracerate/releases/download/v#{version}/tracerate_Darwin_arm64.tar.gz"

@@ -39,7 +39,7 @@ brew install --cask tracerate
 
 ### Prebuilt binaries
 
-Download archives for Linux (AMD64/ARM64), macOS (ARM64), and Windows (AMD64) from the [releases page](https://github.com/crazyuploader/tracerate/releases).
+Download archives for Linux (AMD64/ARM64), macOS (Intel/ARM64), and Windows (AMD64) from the [releases page](https://github.com/crazyuploader/tracerate/releases).
 
 ## Build from source
 
