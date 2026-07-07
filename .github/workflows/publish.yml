@@ -37,7 +37,7 @@ jobs:
             archive: tracerate_Windows_x86_64.zip
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
