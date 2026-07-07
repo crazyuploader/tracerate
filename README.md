@@ -28,6 +28,19 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 | `tracerate --output json` | Machine-readable JSON output                                   |
 | `tracerate --verbose`     | Verbose output (e.g. data used during bufferbloat)             |
 
+## Install
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap crazyuploader/tools
+brew install --cask tracerate
+```
+
+### Prebuilt binaries
+
+Download archives for Linux (AMD64/ARM64), macOS (ARM64), and Windows (AMD64) from the [releases page](https://github.com/crazyuploader/tracerate/releases).
+
 ## Build from source
 
 ```sh
