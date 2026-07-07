@@ -142,8 +142,8 @@ pub fn analyze(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    let delta = bufferbloat.map(|bb| bb.delta_ms).unwrap_or(0.0);
-    let bb_grade = bufferbloat.map(|bb| bb.grade.as_str()).unwrap_or("?");
+    let delta = bufferbloat.map_or(0.0, |bb| bb.delta_ms);
+    let bb_grade = bufferbloat.map_or("?", |bb| bb.grade.as_str());
 
     let summary = diagnose(download, ping, jitter, loss, delta);
     let status = summary_to_status(&summary).to_string();

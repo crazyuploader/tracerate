@@ -95,12 +95,12 @@ pub async fn get_ip_info() -> InfoResult {
         info.country = data.country;
 
         if let Some(org) = data.org {
-            if org.starts_with("AS") && org.contains(' ') {
-                let mut parts = org.splitn(2, ' ');
-                info.asn = parts.next().map(String::from);
-                info.isp = parts.next().map(String::from);
-            } else {
-                info.isp = Some(org);
+            match org.split_once(' ') {
+                Some((asn, isp)) if org.starts_with("AS") => {
+                    info.asn = Some(asn.to_string());
+                    info.isp = Some(isp.to_string());
+                }
+                _ => info.isp = Some(org),
             }
         }
     }
