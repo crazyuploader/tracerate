@@ -1,15 +1,20 @@
 # tracerate
 
+[![Build and Lint](https://github.com/crazyuploader/tracerate/actions/workflows/build-and-lint.yml/badge.svg)](https://github.com/crazyuploader/tracerate/actions/workflows/build-and-lint.yml)
+[![Release](https://github.com/crazyuploader/tracerate/actions/workflows/release.yml/badge.svg)](https://github.com/crazyuploader/tracerate/actions/workflows/release.yml)
+[![DeepSource](https://app.deepsource.com/gh/crazyuploader/tracerate.svg/?label=active+issues&show_trend=true)](https://app.deepsource.com/gh/crazyuploader/tracerate/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate](https://github.com/rushil-b-patel/tracerate) by rushil-b-patel.
 
 ## What it measures
 
-- Download / upload speed (Mbps)
-- Ping and packet loss
+- Download / upload speed (Mbps, auto-scales to Gbps)
+- Ping, jitter, and connection-failure rate
 - Bufferbloat grade (A+ to F)
 - DNS resolution time
 - ISP and location detection
-- Regional latency to 8 global servers
+- Regional latency to 10 global servers
 
 ## Usage
 
