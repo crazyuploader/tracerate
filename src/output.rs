@@ -23,6 +23,18 @@ pub fn print_header() {
     println!();
 }
 
+/// Format a speed, auto-scaling to Gbps at or above 1000 Mbps.
+fn fmt_speed(mbps: f64) -> String {
+    if mbps >= 1000.0 {
+        format!("{:.2} Gbps", mbps / 1000.0)
+            .bold()
+            .cyan()
+            .to_string()
+    } else {
+        format!("{:.2} Mbps", mbps).bold().cyan().to_string()
+    }
+}
+
 fn bar(value: f64, max_value: f64, width: usize) -> String {
     if max_value <= 0.0 {
         return "▱".repeat(width);
@@ -37,16 +49,19 @@ fn section(title: &str) {
     println!("{}", "─".repeat(56).dimmed());
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     info: &InfoResult,
-    dns_ms: f64,
+    dns_ms: Option<f64>,
     r: &serde_json::Value,
     bb: Option<&crate::bufferbloat::BufferbloatResult>,
     regions: Option<&[RegionResult]>,
     summary: &VerdictResult,
     verbose: bool,
+    started_at: &str,
+    duration_s: u64,
 ) {
-    render_connection(info, dns_ms);
+    render_connection(info, dns_ms, started_at, duration_s);
     render_speed(r);
 
     if let Some(bb) = bb {
@@ -57,10 +72,10 @@ pub fn render(
         render_regions(regions);
     }
 
-    render_verdict(&summary.summary);
+    render_verdict(&summary.status, &summary.summary);
 }
 
-fn render_connection(info: &InfoResult, dns_ms: f64) {
+fn render_connection(info: &InfoResult, dns_ms: Option<f64>, started_at: &str, duration_s: u64) {
     let isp = info.isp.as_deref().unwrap_or("unknown");
     let asn = info.asn.as_deref().unwrap_or("");
     let city = info.city.as_deref().unwrap_or("?");
@@ -68,14 +83,6 @@ fn render_connection(info: &InfoResult, dns_ms: f64) {
     let colo = info.colo.as_deref().unwrap_or("?");
     let colo_city = info.colo_city.as_deref().unwrap_or("");
     let ip = info.ip.as_deref().unwrap_or("?");
-
-    let dns_color = if dns_ms < 50.0 {
-        "dim"
-    } else if dns_ms < 150.0 {
-        "yellow"
-    } else {
-        "red"
-    };
 
     let edge = if colo_city.is_empty() {
         format!(
@@ -93,32 +100,45 @@ fn render_connection(info: &InfoResult, dns_ms: f64) {
 
     println!(
         "  {}   {}   {}",
-        format!("{:<5}", "ISP").dimmed(),
+        format!("{:<6}", "ISP").dimmed(),
         isp.bold(),
         asn.to_string().dimmed()
     );
     println!(
         "  {}   {}, {}  {}  {}",
-        format!("{:<5}", "Where").dimmed(),
+        format!("{:<6}", "Where").dimmed(),
         city,
         country,
         "→".dimmed(),
         edge
     );
 
-    let dns_str = format!("{:.2} ms", dns_ms);
-    let dns_colored = match dns_color {
-        "yellow" => dns_str.bold().yellow(),
-        "red" => dns_str.bold().red(),
-        _ => dns_str.bold().cyan(),
+    // A failed lookup renders as an explicit "DNS failed", not a dim 0.0 ms.
+    let dns_segment = match dns_ms {
+        None => "DNS failed".red().to_string(),
+        Some(ms) => {
+            let dns_str = format!("{:.2} ms", ms);
+            let dns_colored = if ms < 50.0 {
+                dns_str.bold().cyan()
+            } else if ms < 150.0 {
+                dns_str.bold().yellow()
+            } else {
+                dns_str.bold().red()
+            };
+            format!("{} {}", "· DNS".dimmed(), dns_colored)
+        }
     };
 
     println!(
-        "  {}   {}   {} {}",
-        format!("{:<5}", "IP").dimmed(),
+        "  {}   {}   {}",
+        format!("{:<6}", "IP").dimmed(),
         ip.yellow(),
-        "· DNS".dimmed(),
-        dns_colored
+        dns_segment
+    );
+    println!(
+        "  {}   {}",
+        format!("{:<6}", "Tested").dimmed(),
+        format!("{}   ·  {}s", started_at, duration_s).dimmed()
     );
     println!();
 }
@@ -174,17 +194,19 @@ fn render_speed(r: &serde_json::Value) {
         "  {}   {}   {}   {}",
         format!("{:<8}", "Download").dimmed(),
         bar(dl, scale, 20).cyan(),
-        format!("{:.2} Mbps", dl).bold().cyan(),
+        fmt_speed(dl),
         format!("({:.1} MB)", util::bytes_to_mb(dl_bytes)).dimmed()
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
+        let ratio = if dl > 0.0 { ul / dl } else { 0.0 };
         println!(
-            "  {}   {}   {}   {}",
+            "  {}   {}   {}   {}   {}",
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
-            format!("{:.2} Mbps", ul).bold().cyan(),
-            format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed()
+            fmt_speed(ul),
+            format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed(),
+            format!("↑/↓ {:.2}x", ratio).dimmed()
         );
     }
 
@@ -201,15 +223,20 @@ fn render_speed(r: &serde_json::Value) {
             "  {}   {}   {}   {}",
             format!("{:<8}", "Combined").dimmed(),
             bar(total, scale * 2.0, 20).cyan(),
-            format!("{:.2} Mbps", total).bold().cyan(),
+            fmt_speed(total),
             format!("({:.1} MB)", util::bytes_to_mb(combined_bytes)).dimmed(),
         );
     }
 
+    // "conn. fail" is honest labeling: this is the TCP connect-failure rate,
+    // not true packet loss (a lost SYN is retried by the kernel).
     let loss_str = if loss > 0.0 {
-        format!("· {:.1}% loss", loss).red().to_string()
+        format!("· {:.1}% conn. fail", loss)
+            .bold()
+            .red()
+            .to_string()
     } else {
-        "· 0% loss".dimmed().to_string()
+        "· 0% conn. fail".green().to_string()
     };
 
     println!(
@@ -274,7 +301,6 @@ fn render_regions(regions: &[RegionResult]) {
 
     let reachable: Vec<&RegionResult> = regions.iter().filter(|r| r.ms > 0.0).collect();
     let scale = reachable.iter().map(|r| r.ms).fold(200.0, f64::max);
-    let max_city = regions.iter().map(|r| r.city.len()).max().unwrap_or(20);
 
     let mut ordered = regions.to_vec();
     ordered.sort_by(|a, b| {
@@ -285,12 +311,19 @@ fn render_regions(regions: &[RegionResult]) {
 
     for r in &ordered {
         let ms = r.ms;
-        let city_padded = format!("{:<width$}", r.city, width = max_city);
+        // Split "City (Region)" into aligned city and region columns.
+        let (city_part, region_part) = match r.city.split_once(" (") {
+            Some((city, region)) => (city, region.trim_end_matches(')')),
+            None => (r.city.as_str(), ""),
+        };
+        let city_padded = format!("{:<16}", city_part);
+        let region_padded = format!("{:<14}", region_part).dimmed();
         if ms == 0.0 {
             println!(
-                "  {}  {}  {}   {}",
+                "  {}  {}  {}  {}  {}",
                 r.code.dimmed(),
                 city_padded,
+                region_padded,
                 "▱".repeat(12).dimmed(),
                 "timeout".dimmed()
             );
@@ -321,9 +354,10 @@ fn render_regions(regions: &[RegionResult]) {
             };
 
             println!(
-                "  {}  {}  {}   {}",
+                "  {}  {}  {}  {}  {}",
                 r.code.dimmed(),
                 city_padded,
+                region_padded,
                 bar_colored,
                 ms_colored
             );
@@ -332,22 +366,16 @@ fn render_regions(regions: &[RegionResult]) {
     println!();
 }
 
-fn render_verdict(verdict: &str) {
-    let (mark, color) = if verdict == "Connection looks healthy." {
-        ("✔", "green")
-    } else if verdict == "Low bandwidth, ISP speed is the bottleneck." {
-        ("⚠", "yellow")
-    } else {
-        ("✘", "red")
+/// Print the final verdict line: a status mark plus the diagnosis message.
+/// `status` is one of "healthy" (✔ green), "low_bandwidth" (⚠ yellow),
+/// or anything else (✘ red).
+fn render_verdict(status: &str, message: &str) {
+    let mark_colored = match status {
+        "healthy" => "✔".green(),
+        "low_bandwidth" => "⚠".yellow(),
+        _ => "✘".red(),
     };
 
-    let mark_colored = match color {
-        "green" => mark.to_string().green(),
-        "yellow" => mark.to_string().yellow(),
-        "red" => mark.to_string().red(),
-        _ => mark.to_string().normal(),
-    };
-
-    println!("  {}  {}", mark_colored, verdict.bold());
+    println!("  {}  {}", mark_colored, message.bold());
     println!();
 }

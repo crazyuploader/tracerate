@@ -1,9 +1,25 @@
 use serde_json::Value;
 
+const HEALTHY_SUMMARY: &str = "Connection looks healthy.";
+const LOW_BANDWIDTH_SUMMARY: &str = "Low bandwidth, ISP speed is the bottleneck.";
+
 #[derive(serde::Serialize)]
 pub struct VerdictResult {
     pub summary: String,
+    /// One of "healthy", "low_bandwidth", "problem" — drives the verdict
+    /// line's mark/color in the renderer without matching on prose.
+    pub status: String,
     pub issues: Vec<String>,
+}
+
+/// Map a diagnosis summary to its status key; any summary that isn't
+/// explicitly healthy or low-bandwidth is a "problem".
+fn summary_to_status(summary: &str) -> &'static str {
+    match summary {
+        HEALTHY_SUMMARY => "healthy",
+        LOW_BANDWIDTH_SUMMARY => "low_bandwidth",
+        _ => "problem",
+    }
 }
 
 fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta: f64) -> String {
@@ -20,9 +36,9 @@ fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta:
         return "High jitter, connection is unstable.".to_string();
     }
     if download < 10.0 {
-        return "Low bandwidth, ISP speed is the bottleneck.".to_string();
+        return LOW_BANDWIDTH_SUMMARY.to_string();
     }
-    "Connection looks healthy.".to_string()
+    HEALTHY_SUMMARY.to_string()
 }
 
 /// Builds a list of human-readable issue messages based on measured network metrics and bufferbloat grade.
@@ -130,6 +146,7 @@ pub fn analyze(
     let bb_grade = bufferbloat.map(|bb| bb.grade.as_str()).unwrap_or("?");
 
     let summary = diagnose(download, ping, jitter, loss, delta);
+    let status = summary_to_status(&summary).to_string();
     let issue_list = issues(
         download,
         upload,
@@ -142,6 +159,7 @@ pub fn analyze(
 
     VerdictResult {
         summary,
+        status,
         issues: issue_list,
     }
 }
@@ -175,7 +193,32 @@ mod tests {
         });
         let v = analyze(&r, None);
         assert_eq!(v.summary, "Connection looks healthy.");
+        assert_eq!(v.status, "healthy");
         assert!(v.issues.is_empty());
+    }
+
+    #[test]
+    fn analyze_low_bandwidth_status() {
+        let r = json!({
+            "download_mbps": 5.0,
+            "ping_ms": 50.0,
+            "jitter_ms": 5.0,
+            "packet_loss": 0.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.status, "low_bandwidth");
+    }
+
+    #[test]
+    fn analyze_problem_status_on_packet_loss() {
+        let r = json!({
+            "download_mbps": 100.0,
+            "ping_ms": 10.0,
+            "jitter_ms": 2.0,
+            "packet_loss": 10.0
+        });
+        let v = analyze(&r, None);
+        assert_eq!(v.status, "problem");
     }
 
     #[test]

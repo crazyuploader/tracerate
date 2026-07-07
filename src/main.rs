@@ -11,7 +11,7 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     name = "tracerate",
-    version = "1.1.0",
+    version,
     about = "A no-nonsense CLI internet speed tester"
 )]
 struct Cli {
@@ -162,19 +162,22 @@ async fn main() {
 
     let spinner = if cli.output == "pretty" {
         let s = make_spinner();
-        s.set_message("Looking up your ISP...");
+        s.set_message("Looking up your ISP and measuring latency...");
         s
     } else {
         indicatif::ProgressBar::hidden()
     };
 
-    let info = info::get_ip_info().await;
-    let dns_ms = info::measure_dns(tester::SERVER.host).await;
+    let test_start = chrono::Local::now();
+    let test_start_instant = std::time::Instant::now();
 
-    spinner.set_message("Measuring latency...");
-
-    let (ping_ms, loss_pct, jitter_ms) =
-        tester::ping(tester::SERVER.host, tester::SERVER.port, 5).await;
+    // ISP lookup, DNS timing, and the ping baseline are independent — run
+    // them concurrently.
+    let (info, dns_ms, (ping_ms, loss_pct, jitter_ms)) = tokio::join!(
+        info::get_ip_info(),
+        info::measure_dns(tester::SERVER.host),
+        tester::ping(tester::SERVER.host, tester::SERVER.port, 5),
+    );
 
     let (download_mbps, download_bytes) = if quiet {
         tester::download(tester::SERVER.download_url, duration_s, cli.streams, None).await
@@ -285,7 +288,7 @@ async fn main() {
 
     let bufferbloat = if test_extras {
         spinner.set_message("Probing bufferbloat (saturating link)...");
-        Some(bufferbloat::measure_bufferbloat(5.0, 8).await)
+        Some(bufferbloat::measure_bufferbloat(5.0, 4).await)
     } else {
         None
     };
@@ -316,10 +319,15 @@ async fn main() {
 
     spinner.finish_and_clear();
 
+    let started_at = test_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let test_duration = test_start_instant.elapsed().as_secs_f64().round() as u64;
+
     if cli.output == "json" {
         let output = serde_json::json!({
             "info": info,
             "dns_ms": dns_ms,
+            "started_at": started_at,
+            "duration_s": test_duration,
             "result": result,
             "bufferbloat": bufferbloat,
             "regions": regions,
@@ -343,6 +351,8 @@ async fn main() {
         regions.as_deref(),
         &summary,
         cli.verbose,
+        &started_at,
+        test_duration,
     );
 }
 

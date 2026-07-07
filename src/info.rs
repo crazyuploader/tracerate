@@ -51,26 +51,6 @@ pub async fn get_ip_info() -> InfoResult {
 
     let client = crate::tester::build_client(5);
 
-    if let Ok(response) = client.get("https://ipinfo.io/json").send().await {
-        if response.status().is_success() {
-            if let Ok(data) = response.json::<IpInfoResponse>().await {
-                info.ip = data.ip;
-                info.city = data.city;
-                info.country = data.country;
-
-                if let Some(org) = data.org {
-                    if org.starts_with("AS") && org.contains(' ') {
-                        let mut parts = org.splitn(2, ' ');
-                        info.asn = parts.next().map(String::from);
-                        info.isp = parts.next().map(String::from);
-                    } else {
-                        info.isp = Some(org);
-                    }
-                }
-            }
-        }
-    }
-
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         "User-Agent",
@@ -89,60 +69,87 @@ pub async fn get_ip_info() -> InfoResult {
             .expect("invalid static header value"),
     );
 
-    if let Ok(response) = client
-        .get("https://speed.cloudflare.com/meta")
-        .headers(headers)
-        .send()
-        .await
-    {
-        if response.status().is_success() {
-            if let Ok(data) = response.json::<serde_json::Value>().await {
-                if let Some(colo) = data.get("colo") {
-                    if let Some(colo_obj) = colo.as_object() {
-                        info.colo = colo_obj
-                            .get("iata")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        info.colo_city = colo_obj
-                            .get("city")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                    } else if let Some(colo_str) = colo.as_str() {
-                        info.colo = Some(colo_str.to_string());
-                    }
-                }
+    let ipinfo_fut = async {
+        match client.get("https://ipinfo.io/json").send().await {
+            Ok(r) if r.status().is_success() => r.json::<IpInfoResponse>().await.ok(),
+            _ => None,
+        }
+    };
+    let cf_fut = async {
+        match client
+            .get("https://speed.cloudflare.com/meta")
+            .headers(headers)
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+            _ => None,
+        }
+    };
 
-                if info.isp.is_none() {
-                    info.isp = data
-                        .get("asOrganization")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                }
+    let (ipinfo_data, cf_data) = tokio::join!(ipinfo_fut, cf_fut);
 
-                if info.asn.is_none() {
-                    if let Some(asn) = data.get("asn").and_then(|v| v.as_u64()) {
-                        info.asn = Some(format!("AS{}", asn));
-                    }
-                }
+    if let Some(data) = ipinfo_data {
+        info.ip = data.ip;
+        info.city = data.city;
+        info.country = data.country;
 
-                if info.city.is_none() {
-                    info.city = data.get("city").and_then(|v| v.as_str()).map(String::from);
-                }
-
-                if info.country.is_none() {
-                    info.country = data
-                        .get("country")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                }
-
-                if info.ip.is_none() {
-                    info.ip = data
-                        .get("clientIp")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                }
+        if let Some(org) = data.org {
+            if org.starts_with("AS") && org.contains(' ') {
+                let mut parts = org.splitn(2, ' ');
+                info.asn = parts.next().map(String::from);
+                info.isp = parts.next().map(String::from);
+            } else {
+                info.isp = Some(org);
             }
+        }
+    }
+
+    if let Some(data) = cf_data {
+        if let Some(colo) = data.get("colo") {
+            if let Some(colo_obj) = colo.as_object() {
+                info.colo = colo_obj
+                    .get("iata")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                info.colo_city = colo_obj
+                    .get("city")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+            } else if let Some(colo_str) = colo.as_str() {
+                info.colo = Some(colo_str.to_string());
+            }
+        }
+
+        if info.isp.is_none() {
+            info.isp = data
+                .get("asOrganization")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+
+        if info.asn.is_none() {
+            if let Some(asn) = data.get("asn").and_then(|v| v.as_u64()) {
+                info.asn = Some(format!("AS{}", asn));
+            }
+        }
+
+        if info.city.is_none() {
+            info.city = data.get("city").and_then(|v| v.as_str()).map(String::from);
+        }
+
+        if info.country.is_none() {
+            info.country = data
+                .get("country")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+
+        if info.ip.is_none() {
+            info.ip = data
+                .get("clientIp")
+                .and_then(|v| v.as_str())
+                .map(String::from);
         }
     }
 
@@ -151,14 +158,15 @@ pub async fn get_ip_info() -> InfoResult {
 
 /// Measure DNS lookup latency for a hostname in milliseconds.
 ///
-/// The lookup duration is rounded to two decimal places; returns `0.0` if the lookup fails.
-pub async fn measure_dns(hostname: &str) -> f64 {
+/// The lookup duration is rounded to two decimal places; returns `None` on
+/// resolution failure (distinguishing failure from a genuine near-zero result).
+pub async fn measure_dns(hostname: &str) -> Option<f64> {
     let start = Instant::now();
     match lookup_host((hostname, 0)).await {
         Ok(_) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            util::round2(elapsed)
+            Some(util::round2(elapsed))
         }
-        Err(_) => 0.0,
+        Err(_) => None,
     }
 }

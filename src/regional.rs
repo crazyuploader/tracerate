@@ -9,11 +9,16 @@ struct Region {
     host: &'static str,
 }
 
-const REGIONS: [Region; 9] = [
+const REGIONS: [Region; 10] = [
     Region {
         code: "IN",
         city: "Mumbai (South Asia)",
         host: "speedtest.mumbai1.linode.com",
+    },
+    Region {
+        code: "IN",
+        city: "Delhi NCR (South Asia)",
+        host: "del-in-ping.vultr.com",
     },
     Region {
         code: "IN",
@@ -22,7 +27,7 @@ const REGIONS: [Region; 9] = [
     },
     Region {
         code: "SG",
-        city: "Singapore (SouthEast Asia)",
+        city: "Singapore (Southeast Asia)",
         host: "speedtest.singapore.linode.com",
     },
     Region {
