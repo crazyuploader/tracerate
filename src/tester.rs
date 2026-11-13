@@ -31,6 +31,11 @@ const REQUEST_HEADERS: [(&str, &str); 3] = [
 
 const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
+/// Size of the pieces a POST body is streamed in. Bytes are counted per piece
+/// so throughput shows up while a request is still in flight, not only when a
+/// whole chunk finishes.
+const UPLOAD_PIECE_BYTES: usize = 64 * 1024;
+
 /// Builds a `reqwest::Client` configured with the given request timeout.
 ///
 /// `timeout_secs` is the per-request timeout in seconds.
@@ -339,17 +344,42 @@ pub async fn upload(
                     break;
                 }
 
-                let chunk = data.as_ref().clone();
-                let len = chunk.len() as u64;
+                let len = data.len() as u64;
 
-                let result = client.post(&url).body(chunk).send().await;
+                // Stream the body in small pieces and count each one as it is
+                // handed to the socket. Counting only after the response
+                // arrives left the speed at 0 until the first full chunk
+                // finished, which takes seconds on a slow uplink.
+                let body_stream = futures::stream::unfold(0usize, {
+                    let data = data.clone();
+                    let stop = stop.clone();
+                    let total_bytes = total_bytes.clone();
+                    let measure_start = measure_start.clone();
+                    move |offset| {
+                        let data = data.clone();
+                        let stop = stop.clone();
+                        let total_bytes = total_bytes.clone();
+                        let measure_start = measure_start.clone();
+                        async move {
+                            if offset >= data.len() || stop.load(Ordering::Relaxed) {
+                                return None;
+                            }
+                            let end = (offset + UPLOAD_PIECE_BYTES).min(data.len());
+                            let piece = data[offset..end].to_vec();
+                            if measure_start.load(Ordering::Relaxed) != 0 {
+                                total_bytes.fetch_add(piece.len() as u64, Ordering::Relaxed);
+                            }
+                            Some((Ok::<_, std::io::Error>(piece), end))
+                        }
+                    }
+                });
 
-                if result.is_ok()
-                    && measure_start.load(Ordering::Relaxed) != 0
-                    && !stop.load(Ordering::Relaxed)
-                {
-                    total_bytes.fetch_add(len, Ordering::Relaxed);
-                }
+                let _ = client
+                    .post(&url)
+                    .header(reqwest::header::CONTENT_LENGTH, len)
+                    .body(reqwest::Body::wrap_stream(body_stream))
+                    .send()
+                    .await;
             }
         });
 

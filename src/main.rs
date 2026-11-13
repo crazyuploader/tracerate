@@ -33,7 +33,7 @@ struct Cli {
 
     #[arg(
         long,
-        default_value_t = 6,
+        default_value_t = 16,
         value_parser = parse_streams,
         help = "Number of parallel streams for download/upload (more streams = higher saturation)"
     )]

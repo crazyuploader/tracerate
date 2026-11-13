@@ -18,7 +18,7 @@ pub struct BufferbloatResult {
 
 /// Cap on parallel saturation streams. Beyond this the probe itself starts
 /// competing for upstream bandwidth on slow links and skews the measurement;
-/// matches the streams=6 ceiling used by the main download test.
+/// keeps the probe lighter than the main download test.
 const MAX_SATURATION_STREAMS: usize = 6;
 
 /// Nearest-rank percentile of a sample list. `pct` is clamped to [0, 100]:
