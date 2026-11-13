@@ -205,7 +205,10 @@ pub async fn download(
     on_progress: Option<ProgressCallback>,
 ) -> (f64, u64) {
     let url = url_template.replace("{bytes}", "1000000000");
-    let client = build_speed_client(30);
+    // The client timeout covers the whole response body, so it must outlast
+    // the warmup plus the measurement window. A fixed 30s killed every stream
+    // mid-test for --duration above ~28s.
+    let client = build_speed_client(duration_s.ceil() as u64 + 10);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -221,29 +224,33 @@ pub async fn download(
         let measure_start = measure_start.clone();
 
         let handle = task::spawn(async move {
-            let response = match client.get(&url).send().await {
-                Ok(r) => r,
-                Err(_) => return,
-            };
-
-            let mut stream = response.bytes_stream();
-
-            while let Some(chunk) = stream.next().await {
-                if stop.load(Ordering::Relaxed) {
-                    return;
-                }
-
-                let mstart = measure_start.load(Ordering::Relaxed);
-                if mstart == 0 {
-                    continue;
-                }
-
-                let chunk = match chunk {
-                    Ok(c) => c,
+            // Reopen the request if the server finishes the body early (the
+            // 1 GB request can end within the window on very fast links).
+            while !stop.load(Ordering::Relaxed) {
+                let response = match client.get(&url).send().await {
+                    Ok(r) => r,
                     Err(_) => return,
                 };
 
-                total_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                let mut stream = response.bytes_stream();
+
+                while let Some(chunk) = stream.next().await {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    let mstart = measure_start.load(Ordering::Relaxed);
+                    if mstart == 0 {
+                        continue;
+                    }
+
+                    let chunk = match chunk {
+                        Ok(c) => c,
+                        Err(_) => return,
+                    };
+
+                    total_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                }
             }
         });
 
