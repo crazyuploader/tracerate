@@ -13,7 +13,7 @@ const REGIONS: [Region; 10] = [
     Region {
         code: "IN",
         city: "Mumbai (South Asia)",
-        host: "speedtest.mumbai1.linode.com",
+        host: "bom-in-ping.vultr.com",
     },
     Region {
         code: "IN",
@@ -28,37 +28,37 @@ const REGIONS: [Region; 10] = [
     Region {
         code: "SG",
         city: "Singapore (Southeast Asia)",
-        host: "speedtest.singapore.linode.com",
+        host: "sgp-ping.vultr.com",
     },
     Region {
         code: "JP",
         city: "Tokyo (East Asia)",
-        host: "speedtest.tokyo2.linode.com",
+        host: "hnd-jp-ping.vultr.com",
     },
     Region {
         code: "GB",
         city: "London (Europe)",
-        host: "speedtest.london.linode.com",
+        host: "lon-gb-ping.vultr.com",
     },
     Region {
         code: "DE",
         city: "Frankfurt (Europe)",
-        host: "speedtest.frankfurt.linode.com",
+        host: "fra-de-ping.vultr.com",
     },
     Region {
         code: "US",
         city: "Newark (US East)",
-        host: "speedtest.newark.linode.com",
+        host: "nj-us-ping.vultr.com",
     },
     Region {
         code: "US",
-        city: "Fremont/Seattle (US West)",
-        host: "speedtest.fremont.linode.com",
+        city: "Seattle (US West)",
+        host: "wa-us-ping.vultr.com",
     },
     Region {
         code: "AU",
         city: "Sydney (Australia)",
-        host: "speedtest.sydney.linode.com",
+        host: "syd-au-ping.vultr.com",
     },
 ];
 
@@ -67,7 +67,8 @@ pub struct RegionResult {
     pub code: String,
     pub city: String,
     pub host: String,
-    pub ms: f64,
+    /// `None` when every connect attempt failed or timed out.
+    pub ms: Option<f64>,
 }
 
 pub async fn ping_regions() -> Vec<RegionResult> {
@@ -104,16 +105,16 @@ pub async fn ping_regions() -> Vec<RegionResult> {
 
 /// Measure TCP connection latency to a host over multiple attempts and return the best result.
 ///
-/// Returns the minimum successful TCP connection time in milliseconds, rounded to two decimal places; returns `0.0` if no attempts succeeded.
+/// Returns the minimum successful TCP connection time in milliseconds, rounded to two decimal places; returns `None` if no attempts succeeded.
 ///
 /// # Examples
 ///
 /// ```
 /// let rt = tokio::runtime::Runtime::new().unwrap();
 /// let ms = rt.block_on(tcp_ping("example.com", 443, 1));
-/// assert!(ms >= 0.0);
+/// assert!(ms.is_none_or(|m| m >= 0.0));
 /// ```
-async fn tcp_ping(host: &str, port: u16, attempts: usize) -> f64 {
+async fn tcp_ping(host: &str, port: u16, attempts: usize) -> Option<f64> {
     let mut samples = Vec::new();
 
     for _ in 0..attempts {
@@ -122,9 +123,5 @@ async fn tcp_ping(host: &str, port: u16, attempts: usize) -> f64 {
         }
     }
 
-    if samples.is_empty() {
-        return 0.0;
-    }
-
-    util::round2(samples.iter().cloned().fold(f64::MAX, f64::min))
+    samples.into_iter().min_by(f64::total_cmp).map(util::round2)
 }

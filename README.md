@@ -18,15 +18,20 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 
 ## Usage
 
-| Command                   | Description                                                    |
-| ------------------------- | -------------------------------------------------------------- |
-| `tracerate`               | Full test (download, upload, bufferbloat, regional latency)    |
-| `tracerate --quick`       | Fast test (10s download only, skips upload and extras)         |
-| `tracerate --combined`    | Add a simultaneous download+upload test after sequential tests |
-| `tracerate --duration 30` | Custom download/upload duration in seconds (default: 15)       |
-| `tracerate --streams 8`   | Parallel streams for download/upload (default: 6)              |
-| `tracerate --output json` | Machine-readable JSON output                                   |
-| `tracerate --verbose`     | Verbose output (e.g. data used during bufferbloat)             |
+| Command                        | Description                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `tracerate`                    | Full test (download, upload, bufferbloat, regional latency)                                                  |
+| `tracerate --quick`            | Fast test (10s download only, skips upload and extras)                                                       |
+| `tracerate --combined`         | Add a simultaneous download+upload test after sequential tests                                               |
+| `tracerate --duration 30`      | Custom download/upload duration in seconds, 1-300 (default: 15)                                              |
+| `tracerate --streams 8`        | Parallel streams for download/upload, 1-32 (default: 6)                                                      |
+| `tracerate --output json`      | Machine-readable JSON output                                                                                 |
+| `tracerate --verbose`          | Verbose output (e.g. data used during bufferbloat)                                                           |
+| `tracerate --download-url URL` | Custom download URL (must contain `{bytes}`); also sets the ping/DNS host. Bufferbloat still uses Cloudflare |
+| `tracerate --upload-url URL`   | Custom upload (POST) URL                                                                                     |
+| `tracerate --no-color`         | Disable colored output (`NO_COLOR` is also respected)                                                        |
+
+Exit codes: `0` on success, `1` if the download measured nothing or arguments are invalid, `130` on Ctrl-C.
 
 ## Install
 

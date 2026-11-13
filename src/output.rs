@@ -299,18 +299,15 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult, verbose: bool)
 fn render_regions(regions: &[RegionResult]) {
     section("Regional latency");
 
-    let reachable: Vec<&RegionResult> = regions.iter().filter(|r| r.ms > 0.0).collect();
-    let scale = reachable.iter().map(|r| r.ms).fold(200.0, f64::max);
+    let scale = regions.iter().filter_map(|r| r.ms).fold(200.0, f64::max);
 
     let mut ordered = regions.to_vec();
     ordered.sort_by(|a, b| {
-        let a_val = if a.ms > 0.0 { a.ms } else { 1e9 };
-        let b_val = if b.ms > 0.0 { b.ms } else { 1e9 };
-        a_val.partial_cmp(&b_val).unwrap()
+        a.ms.unwrap_or(f64::INFINITY)
+            .total_cmp(&b.ms.unwrap_or(f64::INFINITY))
     });
 
     for r in &ordered {
-        let ms = r.ms;
         // Split "City (Region)" into aligned city and region columns.
         let (city_part, region_part) = match r.city.split_once(" (") {
             Some((city, region)) => (city, region.trim_end_matches(')')),
@@ -318,16 +315,7 @@ fn render_regions(regions: &[RegionResult]) {
         };
         let city_padded = format!("{:<16}", city_part);
         let region_padded = format!("{:<14}", region_part).dimmed();
-        if ms == 0.0 {
-            println!(
-                "  {}  {}  {}  {}  {}",
-                r.code.dimmed(),
-                city_padded,
-                region_padded,
-                "▱".repeat(12).dimmed(),
-                "timeout".dimmed()
-            );
-        } else {
+        if let Some(ms) = r.ms {
             let color = if ms < 80.0 {
                 "cyan"
             } else if ms < 180.0 {
@@ -360,6 +348,15 @@ fn render_regions(regions: &[RegionResult]) {
                 region_padded,
                 bar_colored,
                 ms_colored
+            );
+        } else {
+            println!(
+                "  {}  {}  {}  {}  {}",
+                r.code.dimmed(),
+                city_padded,
+                region_padded,
+                "▱".repeat(12).dimmed(),
+                "timeout".dimmed()
             );
         }
     }

@@ -25,6 +25,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = 15.0,
+        value_parser = parse_duration,
         hide_default_value = true,
         help = "Duration in seconds for each download/upload measurement [default: 15s]"
     )]
@@ -33,6 +34,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = 6,
+        value_parser = parse_streams,
         help = "Number of parallel streams for download/upload (more streams = higher saturation)"
     )]
     streams: usize,
@@ -53,12 +55,63 @@ struct Cli {
     combined: bool,
 
     #[arg(
+        long,
+        default_value = tester::SERVER.download_url,
+        value_parser = parse_download_url,
+        help = "Download URL; must contain {bytes}. Also sets the ping/DNS host (bufferbloat still uses Cloudflare)"
+    )]
+    download_url: String,
+
+    #[arg(
+        long,
+        default_value = tester::SERVER.upload_url,
+        value_parser = parse_http_url,
+        help = "Upload URL (POST target)"
+    )]
+    upload_url: String,
+
+    #[arg(long, default_value_t = false, help = "Disable colored output")]
+    no_color: bool,
+
+    #[arg(
         short,
         long,
         default_value_t = false,
         help = "Show extra detail such as data transferred during bufferbloat test"
     )]
     verbose: bool,
+}
+
+fn parse_duration(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    if (1.0..=300.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err("must be between 1 and 300 seconds".into())
+    }
+}
+
+fn parse_http_url(s: &str) -> Result<String, String> {
+    let u = reqwest::Url::parse(s).map_err(|e| e.to_string())?;
+    match (u.scheme(), u.host_str()) {
+        ("http" | "https", Some(_)) => Ok(s.to_string()),
+        _ => Err("must be an http(s) URL with a host".into()),
+    }
+}
+
+fn parse_download_url(s: &str) -> Result<String, String> {
+    if !s.contains("{bytes}") {
+        return Err("must contain {bytes}".into());
+    }
+    parse_http_url(&s.replace("{bytes}", "1"))?;
+    Ok(s.to_string())
+}
+
+fn parse_streams(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(v) if (1..=32).contains(&v) => Ok(v),
+        _ => Err("must be an integer between 1 and 32".into()),
+    }
 }
 
 /// Creates a progress bar prefixed with `prefix` and configured for throughput-style updates.
@@ -140,6 +193,29 @@ fn make_spinner() -> indicatif::ProgressBar {
 async fn main() {
     let cli = Cli::parse();
 
+    if cli.no_color {
+        colored::control::set_override(false);
+    }
+
+    // Restore the cursor a half-drawn progress bar may have hidden, then exit 130.
+    tokio::spawn(async {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            eprint!("\r\x1b[2K\x1b[?25h");
+            std::process::exit(130);
+        }
+    });
+
+    // Validated by the clap parsers above, so these cannot fail.
+    let server_url = reqwest::Url::parse(&cli.download_url.replace("{bytes}", "1"))
+        .expect("download_url validated by clap");
+    let server_host = server_url
+        .host_str()
+        .unwrap_or(tester::SERVER.host)
+        .to_string();
+    let server_port = server_url
+        .port_or_known_default()
+        .unwrap_or(tester::SERVER.port);
+
     #[cfg(windows)]
     colored::control::set_virtual_terminal(true).ok();
 
@@ -175,18 +251,18 @@ async fn main() {
     // them concurrently.
     let (info, dns_ms, (ping_ms, loss_pct, jitter_ms)) = tokio::join!(
         info::get_ip_info(),
-        info::measure_dns(tester::SERVER.host),
-        tester::ping(tester::SERVER.host, tester::SERVER.port, 5),
+        info::measure_dns(&server_host),
+        tester::ping(&server_host, server_port, 5),
     );
 
     let (download_mbps, download_bytes) = if quiet {
-        tester::download(tester::SERVER.download_url, duration_s, cli.streams, None).await
+        tester::download(&cli.download_url, duration_s, cli.streams, None).await
     } else {
         spinner.finish_and_clear();
 
         let pb = make_progress_bar("  Downloading —");
         let result = tester::download(
-            tester::SERVER.download_url,
+            &cli.download_url,
             duration_s,
             cli.streams,
             Some(speed_progress_cb(pb.clone(), duration_s)),
@@ -206,15 +282,14 @@ async fn main() {
 
     let (upload_mbps, upload_bytes) = if test_upload {
         if quiet {
-            let (s, b) =
-                tester::upload(tester::SERVER.upload_url, duration_s, cli.streams, None).await;
+            let (s, b) = tester::upload(&cli.upload_url, duration_s, cli.streams, None).await;
             (Some(s), b)
         } else {
             spinner.finish_and_clear();
 
             let pb = make_progress_bar("  Uploading   —");
             let (speed, bytes) = tester::upload(
-                tester::SERVER.upload_url,
+                &cli.upload_url,
                 duration_s,
                 cli.streams,
                 Some(speed_progress_cb(pb.clone(), duration_s)),
@@ -233,8 +308,8 @@ async fn main() {
     let (combined_dl_mbps, combined_ul_mbps, combined_bytes) = if test_combined {
         if quiet {
             let ((dl, dl_b), (ul, ul_b)) = tokio::join!(
-                tester::download(tester::SERVER.download_url, duration_s, cli.streams, None),
-                tester::upload(tester::SERVER.upload_url, duration_s, cli.streams, None),
+                tester::download(&cli.download_url, duration_s, cli.streams, None),
+                tester::upload(&cli.upload_url, duration_s, cli.streams, None),
             );
             (Some(dl), Some(ul), Some(dl_b + ul_b))
         } else {
@@ -252,7 +327,7 @@ async fn main() {
 
             let ((dl, dl_b), (ul, ul_b)) = tokio::join!(
                 tester::download(
-                    tester::SERVER.download_url,
+                    &cli.download_url,
                     duration_s,
                     cli.streams,
                     Some(Box::new(move |dl_bytes, elapsed| {
@@ -268,7 +343,7 @@ async fn main() {
                     })),
                 ),
                 tester::upload(
-                    tester::SERVER.upload_url,
+                    &cli.upload_url,
                     duration_s,
                     cli.streams,
                     Some(Box::new(move |ul_bytes, _elapsed| {
@@ -322,6 +397,9 @@ async fn main() {
     let started_at = test_start.format("%Y-%m-%d %H:%M:%S").to_string();
     let test_duration = test_start_instant.elapsed().as_secs_f64().round() as u64;
 
+    // Total failure (no download data at all) exits non-zero so scripts/cron can tell.
+    let failed = download_mbps <= 0.0;
+
     if cli.output == "json" {
         let output = serde_json::json!({
             "info": info,
@@ -340,6 +418,9 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        if failed {
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -354,6 +435,10 @@ async fn main() {
         &started_at,
         test_duration,
     );
+
+    if failed {
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +446,34 @@ mod tests {
     use super::*;
 
     // --- make_progress_bar ---
+
+    #[test]
+    fn parse_duration_bounds() {
+        for ok in ["1", "15", "300", "2.5"] {
+            assert!(parse_duration(ok).is_ok(), "{ok}");
+        }
+        for bad in ["0", "-1", "301", "NaN", "inf", "abc"] {
+            assert!(parse_duration(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn url_parsers() {
+        assert!(parse_download_url("https://h.example/d?b={bytes}").is_ok());
+        assert!(parse_download_url("https://h.example/d").is_err());
+        assert!(parse_download_url("ftp://h.example/{bytes}").is_err());
+        assert!(parse_http_url("https://h.example/up").is_ok());
+        assert!(parse_http_url("nope").is_err());
+    }
+
+    #[test]
+    fn parse_streams_bounds() {
+        assert_eq!(parse_streams("1"), Ok(1));
+        assert_eq!(parse_streams("32"), Ok(32));
+        for bad in ["0", "33", "-1", "x"] {
+            assert!(parse_streams(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn make_progress_bar_has_length_1000() {
