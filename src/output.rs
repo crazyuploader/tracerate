@@ -379,3 +379,37 @@ fn render_verdict(status: &str, message: &str) {
     println!("  {}  {}", mark_colored, message.bold());
     println!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::bar;
+
+    #[test]
+    fn bar_nonpositive_max_is_all_empty() {
+        assert_eq!(bar(50.0, 0.0, 20), "▱".repeat(20));
+        assert_eq!(bar(50.0, -10.0, 15), "▱".repeat(15));
+    }
+
+    #[test]
+    fn bar_full_empty_and_clamped() {
+        assert_eq!(bar(100.0, 100.0, 20), "▰".repeat(20));
+        assert_eq!(bar(0.0, 100.0, 20), "▱".repeat(20));
+        assert_eq!(bar(500.0, 100.0, 20), "▰".repeat(20));
+    }
+
+    #[test]
+    fn bar_mid_and_width_invariant() {
+        assert_eq!(
+            bar(50.0, 100.0, 20),
+            format!("{}{}", "▰".repeat(10), "▱".repeat(10))
+        );
+        for (v, m, w) in [
+            (3.0, 10.0, 7),
+            (7.0, 10.0, 13),
+            (1.0, 1.0, 1),
+            (150.0, 100.0, 20),
+        ] {
+            assert_eq!(bar(v, m, w).chars().count(), w);
+        }
+    }
+}
