@@ -49,10 +49,18 @@ const UPLOAD_PIECE_BYTES: usize = 64 * 1024;
 /// // use `client` to make requests...
 /// ```
 pub fn build_client(timeout_secs: u64) -> reqwest::Client {
+    install_crypto_provider();
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("failed to build HTTP client")
+}
+
+/// Installs ring as the process-wide rustls crypto provider. reqwest is built
+/// without one (`rustls-no-provider`) because aws-lc-sys runs AVX code at
+/// startup and crashes on CPUs without AVX. Safe to call more than once.
+fn install_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 /// Builds an HTTP client preconfigured with standard request headers and a request timeout.
@@ -67,6 +75,7 @@ pub fn build_client(timeout_secs: u64) -> reqwest::Client {
 /// // use `client` to make requests...
 /// ```
 pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
+    install_crypto_provider();
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .default_headers({
@@ -82,16 +91,16 @@ pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
 
 /// Measures TCP latency, packet loss, and jitter to a given host and port by performing multiple connection attempts.
 ///
-/// Performs `attempts` sequential TCP connection attempts and aggregates the results:
-/// - `host` and `port` specify the target address to connect to.
-/// - `attempts` is the number of connection attempts to perform.
+/// The host is resolved once and one warm-up connect is discarded, so DNS
+/// lookup and cold-path costs do not show up as latency or jitter. Then
+/// `attempts` sequential TCP connects are made to the resolved address.
 ///
 /// # Returns
 ///
 /// A tuple containing:
 /// - `Option<f64>`: average round-trip time in milliseconds rounded to two decimals, or `None` if all attempts failed.
 /// - `f64`: packet loss percentage rounded to one decimal (`0.0`–`100.0`).
-/// - `Option<f64>`: jitter in milliseconds (difference between max and min successful latencies) rounded to two decimals, or `None` if no attempts succeeded.
+/// - `Option<f64>`: jitter in milliseconds (mean absolute difference between consecutive successful samples) rounded to two decimals, or `None` if no attempts succeeded.
 ///
 /// # Examples
 ///
@@ -103,10 +112,21 @@ pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
 /// # });
 /// ```
 pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, Option<f64>) {
+    let addr = match tokio::net::lookup_host((host, port)).await {
+        Ok(mut addrs) => match addrs.next() {
+            Some(a) => a,
+            None => return (None, 100.0, None),
+        },
+        Err(_) => return (None, 100.0, None),
+    };
+
+    // Warm-up connect: not counted.
+    let _ = tcp_connect_ms(addr).await;
+
     let mut results = Vec::new();
 
     for _ in 0..attempts {
-        let result = tcp_ping_once(host, port).await;
+        let result = tcp_connect_ms(addr).await;
         results.push(result);
     }
 
@@ -117,19 +137,23 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, 
 
     let avg = valid.iter().sum::<f64>() / valid.len() as f64;
     let loss = ((attempts - valid.len()) as f64 / attempts as f64) * 100.0;
-    let jitter = valid
-        .iter()
-        .cloned()
-        .fold((f64::MAX, f64::MIN), |(min, max), v| {
-            (min.min(v), max.max(v))
-        });
-    let jitter = jitter.1 - jitter.0;
 
     (
         Some(util::round2(avg)),
         util::round1(loss),
-        Some(util::round2(jitter)),
+        Some(util::round2(jitter(&valid))),
     )
+}
+
+/// Mean absolute difference between consecutive samples (the usual jitter
+/// definition). A single outlier moves it far less than max − min does.
+/// Returns 0.0 for fewer than two samples.
+fn jitter(samples: &[f64]) -> f64 {
+    if samples.len() < 2 {
+        return 0.0;
+    }
+    let total: f64 = samples.windows(2).map(|w| (w[1] - w[0]).abs()).sum();
+    total / (samples.len() - 1) as f64
 }
 
 /// Measures a single TCP round-trip time to `host:port`.
@@ -148,13 +172,13 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, 
 /// assert!(elapsed.is_none() || elapsed.unwrap() >= 0.0);
 /// ```
 pub async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
+    tcp_connect_ms((host, port)).await
+}
+
+/// Times one TCP connect to `addr`, with a 3 second timeout.
+async fn tcp_connect_ms<A: tokio::net::ToSocketAddrs>(addr: A) -> Option<f64> {
     let start = Instant::now();
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        TcpStream::connect((host, port)),
-    )
-    .await
-    {
+    match tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(addr)).await {
         Ok(Ok(_)) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             Some(elapsed)
@@ -228,13 +252,17 @@ pub async fn download(
             // 1 GB request can end within the window on very fast links).
             while !stop.load(Ordering::Relaxed) {
                 let response = match client.get(&url).send().await {
-                    Ok(r) => r,
-                    Err(_) => return,
+                    Ok(r) if r.status().is_success() => r,
+                    // An error status would otherwise end the body at once and
+                    // send the loop straight into another request.
+                    _ => return,
                 };
 
                 let mut stream = response.bytes_stream();
+                let mut got_data = false;
 
                 while let Some(chunk) = stream.next().await {
+                    got_data = true;
                     if stop.load(Ordering::Relaxed) {
                         return;
                     }
@@ -250,6 +278,11 @@ pub async fn download(
                     };
 
                     total_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                }
+
+                // An empty body would spin the loop without measuring anything.
+                if !got_data {
+                    return;
                 }
             }
         });
@@ -352,6 +385,9 @@ pub async fn upload(
                 }
 
                 let len = data.len() as u64;
+                // Bytes this request added to `total_bytes`, so a failed
+                // request can take back what it never delivered.
+                let sent = Arc::new(AtomicU64::new(0));
 
                 // Stream the body in small pieces and count each one as it is
                 // handed to the socket. Counting only after the response
@@ -362,11 +398,13 @@ pub async fn upload(
                     let stop = stop.clone();
                     let total_bytes = total_bytes.clone();
                     let measure_start = measure_start.clone();
+                    let sent = sent.clone();
                     move |offset| {
                         let data = data.clone();
                         let stop = stop.clone();
                         let total_bytes = total_bytes.clone();
                         let measure_start = measure_start.clone();
+                        let sent = sent.clone();
                         async move {
                             if offset >= data.len() || stop.load(Ordering::Relaxed) {
                                 return None;
@@ -375,18 +413,34 @@ pub async fn upload(
                             let piece = data[offset..end].to_vec();
                             if measure_start.load(Ordering::Relaxed) != 0 {
                                 total_bytes.fetch_add(piece.len() as u64, Ordering::Relaxed);
+                                sent.fetch_add(piece.len() as u64, Ordering::Relaxed);
                             }
                             Some((Ok::<_, std::io::Error>(piece), end))
                         }
                     }
                 });
 
-                let _ = client
+                let result = client
                     .post(&url)
                     .header(reqwest::header::CONTENT_LENGTH, len)
                     .body(reqwest::Body::wrap_stream(body_stream))
                     .send()
                     .await;
+
+                // Requests cut short by `stop` fail by design; keep their bytes.
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                match result {
+                    Ok(r) if r.status().is_success() => {}
+                    // Failed or rejected: uncount the bytes and end this stream
+                    // instead of retrying in a tight loop.
+                    _ => {
+                        total_bytes.fetch_sub(sent.load(Ordering::Relaxed), Ordering::Relaxed);
+                        return;
+                    }
+                }
             }
         });
 
@@ -432,6 +486,32 @@ pub async fn upload(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- jitter ---
+
+    #[test]
+    fn jitter_fewer_than_two_samples_is_zero() {
+        assert_eq!(jitter(&[]), 0.0);
+        assert_eq!(jitter(&[5.0]), 0.0);
+    }
+
+    #[test]
+    fn jitter_steady_samples_is_zero() {
+        assert_eq!(jitter(&[4.0, 4.0, 4.0]), 0.0);
+    }
+
+    #[test]
+    fn jitter_is_mean_consecutive_difference() {
+        // |6-4| + |3-6| + |7-3| = 9, over 3 gaps
+        assert_eq!(jitter(&[4.0, 6.0, 3.0, 7.0]), 3.0);
+    }
+
+    #[test]
+    fn jitter_single_outlier_is_damped() {
+        // max - min would report 40 ms here.
+        let j = jitter(&[44.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]);
+        assert!((j - 40.0 / 9.0).abs() < 1e-9);
+    }
 
     // --- build_client ---
 

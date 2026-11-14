@@ -252,7 +252,7 @@ async fn main() {
     let (info, dns_ms, (ping_ms, loss_pct, jitter_ms)) = tokio::join!(
         info::get_ip_info(),
         info::measure_dns(&server_host),
-        tester::ping(&server_host, server_port, 5),
+        tester::ping(&server_host, server_port, 10),
     );
 
     let (download_mbps, download_bytes) = if quiet {

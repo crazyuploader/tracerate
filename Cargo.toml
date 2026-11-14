@@ -6,7 +6,10 @@ description = "A no-nonsense CLI internet speed tester"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "http2", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["stream", "json", "http2", "rustls-no-provider"] }
+# ring instead of aws-lc-rs: aws-lc-sys runs AVX code at startup, which
+# crashes with "Illegal instruction" on CPUs without AVX (e.g. Celeron N3350).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
