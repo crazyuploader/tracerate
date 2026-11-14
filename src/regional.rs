@@ -9,7 +9,7 @@ struct Region {
     host: &'static str,
 }
 
-const REGIONS: [Region; 10] = [
+const REGIONS: [Region; 18] = [
     Region {
         code: "IN",
         city: "Mumbai (South Asia)",
@@ -36,6 +36,16 @@ const REGIONS: [Region; 10] = [
         host: "hnd-jp-ping.vultr.com",
     },
     Region {
+        code: "KR",
+        city: "Seoul (East Asia)",
+        host: "sel-kor-ping.vultr.com",
+    },
+    Region {
+        code: "IL",
+        city: "Tel Aviv (Middle East)",
+        host: "tlv-il-ping.vultr.com",
+    },
+    Region {
         code: "GB",
         city: "London (Europe)",
         host: "lon-gb-ping.vultr.com",
@@ -46,14 +56,44 @@ const REGIONS: [Region; 10] = [
         host: "fra-de-ping.vultr.com",
     },
     Region {
+        code: "NL",
+        city: "Amsterdam (Europe)",
+        host: "ams-nl-ping.vultr.com",
+    },
+    Region {
+        code: "ZA",
+        city: "Johannesburg (Africa)",
+        host: "jnb-za-ping.vultr.com",
+    },
+    Region {
         code: "US",
         city: "Newark (US East)",
         host: "nj-us-ping.vultr.com",
     },
     Region {
+        code: "CA",
+        city: "Toronto (Canada)",
+        host: "tor-ca-ping.vultr.com",
+    },
+    Region {
+        code: "US",
+        city: "Chicago (US Central)",
+        host: "il-us-ping.vultr.com",
+    },
+    Region {
         code: "US",
         city: "Seattle (US West)",
         host: "wa-us-ping.vultr.com",
+    },
+    Region {
+        code: "US",
+        city: "Los Angeles (US West)",
+        host: "lax-ca-us-ping.vultr.com",
+    },
+    Region {
+        code: "BR",
+        city: "São Paulo (South America)",
+        host: "sao-br-ping.vultr.com",
     },
     Region {
         code: "AU",

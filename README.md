@@ -14,7 +14,7 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 - Bufferbloat grade (A+ to F)
 - DNS resolution time
 - ISP and location detection
-- Regional latency to 10 global servers
+- Regional latency to 18 global servers
 
 ## Usage
 
