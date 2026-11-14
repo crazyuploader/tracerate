@@ -10,6 +10,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Compile bundled C code (aws-lc-sys) for baseline x86-64. The ubuntu-26.04
+  # runner installs amd64v3 packages and its gcc emits AVX by default, which
+  # crashes with "Illegal instruction" on CPUs without AVX (e.g. Celeron N3350).
+  CFLAGS_x86_64_unknown_linux_musl: -march=x86-64
 
 jobs:
   build:

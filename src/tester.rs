@@ -49,18 +49,10 @@ const UPLOAD_PIECE_BYTES: usize = 64 * 1024;
 /// // use `client` to make requests...
 /// ```
 pub fn build_client(timeout_secs: u64) -> reqwest::Client {
-    install_crypto_provider();
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .expect("failed to build HTTP client")
-}
-
-/// Installs ring as the process-wide rustls crypto provider. reqwest is built
-/// without one (`rustls-no-provider`) because aws-lc-sys runs AVX code at
-/// startup and crashes on CPUs without AVX. Safe to call more than once.
-fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
 /// Builds an HTTP client preconfigured with standard request headers and a request timeout.
@@ -75,7 +67,6 @@ fn install_crypto_provider() {
 /// // use `client` to make requests...
 /// ```
 pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
-    install_crypto_provider();
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .default_headers({
