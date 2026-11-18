@@ -368,14 +368,13 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
 fn render_regions(regions: &[RegionResult]) {
     section("Regional latency");
 
-    if regions.is_empty() {
+    // Only -4/-6 drops regions: their host has no address of that family.
+    let skipped = crate::regional::REGIONS.len() - regions.len();
+    if skipped > 0 {
         println!(
             "  {}",
-            "Skipped: the regional test servers have no IPv6 addresses. Run without -6 to measure."
-                .dimmed()
+            format!("{skipped} regions skipped: no address in the chosen IP family").dimmed()
         );
-        println!();
-        return;
     }
 
     let scale = regions.iter().filter_map(|r| r.ms).fold(200.0, f64::max);

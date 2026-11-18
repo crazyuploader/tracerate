@@ -3,17 +3,20 @@ use tokio::task;
 use crate::tester;
 use crate::util;
 
-struct Region {
+pub struct Region {
     code: &'static str,
     city: &'static str,
     host: &'static str,
 }
 
-const REGIONS: [Region; 18] = [
+/// `ec2.<region>.api.aws` hosts are AWS's dual-stack (IPv4 + IPv6) endpoints, used
+/// wherever an AWS region sits in the listed city. The Vultr hosts are IPv4-only;
+/// with `-6` they are skipped.
+pub const REGIONS: [Region; 18] = [
     Region {
         code: "IN",
         city: "Mumbai (South Asia)",
-        host: "bom-in-ping.vultr.com",
+        host: "ec2.ap-south-1.api.aws",
     },
     Region {
         code: "IN",
@@ -23,37 +26,37 @@ const REGIONS: [Region; 18] = [
     Region {
         code: "IN",
         city: "Hyderabad (South Asia)",
-        host: "ec2.ap-south-2.amazonaws.com",
+        host: "ec2.ap-south-2.api.aws",
     },
     Region {
         code: "SG",
         city: "Singapore (Southeast Asia)",
-        host: "sgp-ping.vultr.com",
+        host: "ec2.ap-southeast-1.api.aws",
     },
     Region {
         code: "JP",
         city: "Tokyo (East Asia)",
-        host: "hnd-jp-ping.vultr.com",
+        host: "ec2.ap-northeast-1.api.aws",
     },
     Region {
         code: "KR",
         city: "Seoul (East Asia)",
-        host: "sel-kor-ping.vultr.com",
+        host: "ec2.ap-northeast-2.api.aws",
     },
     Region {
         code: "IL",
         city: "Tel Aviv (Middle East)",
-        host: "tlv-il-ping.vultr.com",
+        host: "ec2.il-central-1.api.aws",
     },
     Region {
         code: "GB",
         city: "London (Europe)",
-        host: "lon-gb-ping.vultr.com",
+        host: "ec2.eu-west-2.api.aws",
     },
     Region {
         code: "DE",
         city: "Frankfurt (Europe)",
-        host: "fra-de-ping.vultr.com",
+        host: "ec2.eu-central-1.api.aws",
     },
     Region {
         code: "NL",
@@ -93,12 +96,12 @@ const REGIONS: [Region; 18] = [
     Region {
         code: "BR",
         city: "São Paulo (South America)",
-        host: "sao-br-ping.vultr.com",
+        host: "ec2.sa-east-1.api.aws",
     },
     Region {
         code: "AU",
         city: "Sydney (Australia)",
-        host: "syd-au-ping.vultr.com",
+        host: "ec2.ap-southeast-2.api.aws",
     },
 ];
 
@@ -120,8 +123,12 @@ pub async fn ping_regions() -> Vec<RegionResult> {
         let city = region.city;
 
         let handle = task::spawn(async move {
+            // Under -4/-6, a host without an address of that family is skipped, not a timeout.
+            if !tester::has_family_addr(host, 443).await {
+                return None;
+            }
             let ms = tcp_ping(host, 443, 3).await;
-            (code, city, host, ms)
+            Some((code, city, host, ms))
         });
 
         handles.push(handle);
@@ -130,7 +137,7 @@ pub async fn ping_regions() -> Vec<RegionResult> {
     let mut results = Vec::new();
 
     for handle in handles {
-        if let Ok((code, city, host, ms)) = handle.await {
+        if let Ok(Some((code, city, host, ms))) = handle.await {
             results.push(RegionResult {
                 code: code.to_string(),
                 city: city.to_string(),

@@ -483,11 +483,7 @@ async fn main() {
         upload.as_ref().map_or(&[][..], |u| &u.loaded_ms),
     );
 
-    // The regional ping servers have no IPv6 addresses (only São Paulo has an AAAA
-    // record), so with -6 an empty list stands for "skipped".
-    let regions = if test_regions && cli.ipv6 {
-        Some(Vec::new())
-    } else if test_regions {
+    let regions = if test_regions {
         spinner.set_message("Pinging regional servers...");
         Some(regional::ping_regions().await)
     } else {

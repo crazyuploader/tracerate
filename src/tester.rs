@@ -171,6 +171,16 @@ fn jitter(samples: &[f64]) -> f64 {
     total / (samples.len() - 1) as f64
 }
 
+/// True when `host` resolves to an address of the forced IP family, or of any
+/// family when none is forced. False also when the lookup fails, so a dead host
+/// is skipped the same way.
+pub async fn has_family_addr(host: &str, port: u16) -> bool {
+    match tokio::net::lookup_host((host, port)).await {
+        Ok(mut addrs) => addrs.any(|a| family_ok(&a)),
+        Err(_) => false,
+    }
+}
+
 /// Measures a single TCP round-trip time to `host:port`, in milliseconds.
 ///
 /// The host is resolved before the timer starts, to an address of the forced
