@@ -24,12 +24,10 @@ struct Cli {
 
     #[arg(
         long,
-        default_value_t = 30.0,
         value_parser = parse_duration,
-        hide_default_value = true,
-        help = "Maximum seconds for each download/upload measurement; stops early once the speed is stable [default: 30s]"
+        help = "Maximum seconds for each download/upload measurement; stops early once the speed is stable [default: 30s, 10s with --quick]"
     )]
-    duration: f64,
+    duration: Option<f64>,
 
     #[arg(
         long,
@@ -293,7 +291,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let duration_s = if cli.quick { 10.0 } else { cli.duration };
+    let duration_s = cli.duration.unwrap_or(if cli.quick { 10.0 } else { 30.0 });
     let test_upload = !cli.quick;
     let test_extras = !cli.quick;
     let test_combined = cli.combined;

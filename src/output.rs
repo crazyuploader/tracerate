@@ -25,6 +25,10 @@ pub fn print_header() {
 
 /// Format a speed, auto-scaling to Gbps at or above 1000 Mbps.
 fn fmt_speed(mbps: f64) -> String {
+    // The testers return exactly 0 only when nothing got through.
+    if mbps <= 0.0 {
+        return "failed".bold().red().to_string();
+    }
     if mbps >= 1000.0 {
         format!("{:.2} Gbps", mbps / 1000.0)
             .bold()
@@ -207,8 +211,13 @@ fn render_speed(r: &serde_json::Value, verbose: bool) {
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     let ul_bytes = r.get("upload_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-    let ping = r.get("ping_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let jitter = r.get("jitter_ms").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    // None when every ping failed; shown as "failed", not a misleading 0.00 ms.
+    let ping = num("ping_ms");
+    let jitter = num("jitter_ms");
+    let ms_or_failed = |v: Option<f64>| match v {
+        Some(ms) => format!("{:.2} ms", ms).bold().cyan().to_string(),
+        None => "failed".bold().red().to_string(),
+    };
     let loss = r.get("packet_loss").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
     let scale = dl.max(ul).max(100.0);
@@ -276,21 +285,21 @@ fn render_speed(r: &serde_json::Value, verbose: bool) {
     println!(
         "  {}   {}   {}{}",
         format!("{:<8}", "Ping").dimmed(),
-        format!("{:.2} ms", ping).bold().cyan(),
+        ms_or_failed(ping),
         loss_str,
         ping_range
     );
     println!(
         "  {}   {}",
         format!("{:<8}", "Jitter").dimmed(),
-        format!("{:.2} ms", jitter).bold().cyan()
+        ms_or_failed(jitter)
     );
     if let Some(mb) = num("total_data_mb") {
         println!(
             "  {}   {}   {}",
-            format!("{:<8}", "Data").dimmed(),
+            format!("{:<8}", "Total").dimmed(),
             format!("{:.1} MB", mb).bold().cyan(),
-            "total, incl. warm-up and bufferbloat".dimmed()
+            "incl. warm-up and bufferbloat".dimmed()
         );
     }
     println!();

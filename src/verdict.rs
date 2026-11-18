@@ -23,6 +23,9 @@ fn summary_to_status(summary: &str) -> &'static str {
 }
 
 fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta: f64) -> String {
+    if download <= 0.0 {
+        return "Download failed, could not reach the test server.".to_string();
+    }
     if loss > 5.0 {
         return "Packet loss detected, connection is unstable.".to_string();
     }
@@ -76,8 +79,12 @@ fn issues(
     if download < 25.0 {
         list.push(format!("Low download: {} Mbps", download));
     }
-    if upload_tested && upload.unwrap_or(0.0) < 10.0 {
-        list.push(format!("Low upload: {} Mbps", upload.unwrap_or(0.0)));
+    match upload {
+        Some(u) if upload_tested && u <= 0.0 => list.push("Upload failed".to_string()),
+        _ if upload_tested && upload.unwrap_or(0.0) < 10.0 => {
+            list.push(format!("Low upload: {} Mbps", upload.unwrap_or(0.0)))
+        }
+        _ => {}
     }
     if ping > 80.0 {
         list.push(format!("High ping: {} ms", ping));
@@ -505,11 +512,11 @@ mod tests {
     // --- analyze: missing fields default gracefully ---
 
     #[test]
-    fn analyze_missing_all_fields_defaults_to_low_bandwidth() {
-        // All fields absent → download=0, ping=0, jitter=0, loss=0 → download<10 fires
+    fn analyze_missing_all_fields_is_download_failure() {
+        // All fields absent → download=0 → nothing measured, reported as a failure
         let r = json!({});
         let v = analyze(&r, None);
-        assert_eq!(v.summary, "Low bandwidth, ISP speed is the bottleneck.");
+        assert_eq!(v.summary, "Download failed, could not reach the test server.");
     }
 
     #[test]
@@ -523,7 +530,19 @@ mod tests {
             "packet_loss": 0.0
         });
         let v = analyze(&r, None);
-        assert!(v.issues.iter().any(|s| s.contains("Low upload")));
+        assert!(v.issues.iter().any(|s| s == "Upload failed"));
+    }
+
+    #[test]
+    fn analyze_download_failure_is_named() {
+        // A dead host also fails every ping; the verdict must name the real failure.
+        let r = json!({ "download_mbps": 0.0, "packet_loss": 100.0 });
+        let v = analyze(&r, None);
+        assert_eq!(
+            v.summary,
+            "Download failed, could not reach the test server."
+        );
+        assert_eq!(v.status, "problem");
     }
 
     // Regression: multiple issues can be reported simultaneously

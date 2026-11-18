@@ -436,6 +436,21 @@ pub async fn upload(
 
     let client = build_speed_client(60);
 
+    // A server that rejects uploads only answers after the body is sent, so the
+    // bytes still in flight when the window ends would read as real speed.
+    // One small POST up front catches a bad --upload-url.
+    match client.post(url).body(vec![0u8; 1024]).send().await {
+        Ok(r) if r.status().is_success() => {}
+        _ => {
+            return Transfer {
+                mbps: 0.0,
+                bytes: 0,
+                warmup_bytes: 0,
+                elapsed_s: 0.0,
+            }
+        }
+    }
+
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
     let warmup_bytes = Arc::new(AtomicU64::new(0));
