@@ -22,9 +22,19 @@ fn summary_to_status(summary: &str) -> &'static str {
     }
 }
 
-fn diagnose(download: f64, ping: f64, jitter: f64, loss: f64, bufferbloat_delta: f64) -> String {
+fn diagnose(
+    download: f64,
+    upload: Option<f64>,
+    ping: f64,
+    jitter: f64,
+    loss: f64,
+    bufferbloat_delta: f64,
+) -> String {
     if download <= 0.0 {
         return "Download failed, could not reach the test server.".to_string();
+    }
+    if upload.is_some_and(|u| u <= 0.0) {
+        return "Upload failed, the server rejected or dropped it.".to_string();
     }
     if loss > 5.0 {
         return "Packet loss detected, connection is unstable.".to_string();
@@ -149,10 +159,13 @@ pub fn analyze(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    let delta = bufferbloat.map_or(0.0, |bb| bb.delta_ms);
+    // An ungraded result ("?": too few samples) must not drive the verdict.
+    let delta = bufferbloat
+        .filter(|bb| bb.grade != "?")
+        .map_or(0.0, |bb| bb.delta_ms);
     let bb_grade = bufferbloat.map_or("?", |bb| bb.grade.as_str());
 
-    let summary = diagnose(download, ping, jitter, loss, delta);
+    let summary = diagnose(download, upload, ping, jitter, loss, delta);
     let status = summary_to_status(&summary).to_string();
     let issue_list = issues(
         download,
@@ -185,6 +198,7 @@ mod tests {
             grade: grade.to_string(),
             download_loaded_ms: None,
             upload_loaded_ms: None,
+            samples: 50,
         }
     }
 
@@ -535,6 +549,25 @@ mod tests {
         });
         let v = analyze(&r, None);
         assert!(v.issues.iter().any(|s| s == "Upload failed"));
+    }
+
+    #[test]
+    fn analyze_upload_failure_is_a_problem() {
+        let r = json!({ "download_mbps": 100.0, "upload_mbps": 0.0, "ping_ms": 10.0 });
+        let v = analyze(&r, None);
+        assert_eq!(
+            v.summary,
+            "Upload failed, the server rejected or dropped it."
+        );
+        assert_eq!(v.status, "problem");
+    }
+
+    #[test]
+    fn analyze_ungraded_bufferbloat_is_ignored() {
+        let mut bb = make_bb(1000.0, "?");
+        bb.samples = 5;
+        let r = json!({ "download_mbps": 100.0, "ping_ms": 10.0 });
+        assert_eq!(analyze(&r, Some(&bb)).status, "healthy");
     }
 
     #[test]

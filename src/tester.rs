@@ -233,9 +233,11 @@ pub struct Window {
     pub probe: Option<SocketAddr>,
 }
 
-/// The data cap is checked only after this many seconds, so a tiny window
-/// cannot turn a few bytes into an absurd speed.
-const CAP_MIN_S: f64 = 1.0;
+/// Below this many seconds, a window is too short to give a speed on its own.
+const MIN_WINDOW_S: f64 = 0.1;
+
+/// Share of `max_bytes` the warm-up may use; the rest is left for measuring.
+const CAP_WARMUP_SHARE: f64 = 0.25;
 
 /// A stable stop never ends a measurement before this many seconds.
 const STABLE_MIN_S: f64 = 8.0;
@@ -266,7 +268,19 @@ async fn measure_window(
     w: &Window,
     on_progress: Option<ProgressCallback>,
 ) -> Transfer {
-    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
+    // With a cap, poll every 10 ms: at gigabit speeds 100 ms moves tens of MB.
+    let tick = std::time::Duration::from_millis(if w.max_bytes.is_some() { 10 } else { 100 });
+
+    // Warm-up, cut short once it has used its share of the cap. A fixed 1.5 s
+    // moved ~450 MB on a 2.4 Gbps link, far past small caps.
+    let warmup_start = Instant::now();
+    let warmup_end = warmup_start + std::time::Duration::from_secs_f64(1.5);
+    let warmup_cap = w.max_bytes.map(|m| (m as f64 * CAP_WARMUP_SHARE) as u64);
+    while Instant::now() < warmup_end
+        && warmup_cap.is_none_or(|c| warmup_bytes.load(Ordering::Relaxed) < c)
+    {
+        tokio::time::sleep(tick).await;
+    }
 
     total_bytes.store(0, Ordering::Relaxed);
     let start_instant = Instant::now();
@@ -296,7 +310,7 @@ async fn measure_window(
             cb(bytes, elapsed);
         }
         if let Some(max) = w.max_bytes {
-            if elapsed >= CAP_MIN_S && bytes + warmup_bytes.load(Ordering::Relaxed) >= max {
+            if bytes + warmup_bytes.load(Ordering::Relaxed) >= max {
                 break;
             }
         }
@@ -306,7 +320,7 @@ async fn measure_window(
                 break;
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tick).await;
     }
 
     stop.store(true, Ordering::Relaxed);
@@ -330,8 +344,17 @@ async fn measure_window(
         };
     }
 
+    // A cap can end the window within milliseconds on a fast link, and a speed
+    // over so short a span is noise (6338 Mbps on a 2.4 Gbps link). Measure
+    // from the start of warm-up instead: slow start makes it low, never absurd.
+    let mbps = if elapsed < MIN_WINDOW_S {
+        util::bytes_to_mbps(bytes + warmup_bytes, warmup_start.elapsed().as_secs_f64())
+    } else {
+        util::bytes_to_mbps(bytes, elapsed)
+    };
+
     Transfer {
-        mbps: util::round2(util::bytes_to_mbps(bytes, elapsed)),
+        mbps: util::round2(mbps),
         bytes,
         warmup_bytes,
         elapsed_s: elapsed,

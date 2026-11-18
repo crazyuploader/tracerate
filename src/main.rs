@@ -25,6 +25,7 @@ struct Cli {
     #[arg(
         long,
         value_parser = parse_duration,
+        allow_negative_numbers = true,
         help = "Maximum seconds for each download/upload measurement; stops early once the speed is stable [default: 30s, 10s with --quick]"
     )]
     duration: Option<f64>,
@@ -33,6 +34,7 @@ struct Cli {
         long,
         default_value_t = 16,
         value_parser = parse_streams,
+        allow_negative_numbers = true,
         help = "Number of parallel streams for download/upload (more streams = higher saturation)"
     )]
     streams: usize,
@@ -90,7 +92,8 @@ struct Cli {
         long,
         value_name = "MB",
         value_parser = parse_max_data,
-        help = "Stop the speed tests once about this many MB are used (split between download and upload)"
+        allow_negative_numbers = true,
+        help = "Stop the speed tests once about this many MB are used (split between download and upload; uses at most 4 streams)"
     )]
     max_data: Option<f64>,
 
@@ -378,6 +381,13 @@ async fn main() {
         }
     };
 
+    // Under a cap, fewer streams: each stream's buffers and in-flight data
+    // add to the overshoot past the cap.
+    let streams = if cli.max_data.is_some() {
+        cli.streams.min(4)
+    } else {
+        cli.streams
+    };
     // Data cap in bytes, shared between the speed tests (bytes_to_mb uses MiB).
     let max_bytes = cli.max_data.map(|mb| (mb * 1_048_576.0) as u64);
     let window = |stable_stop: bool, max_bytes: Option<u64>| tester::Window {
@@ -399,7 +409,7 @@ async fn main() {
         let (dl, ul) = tokio::join!(
             tester::download(
                 &cli.download_url,
-                cli.streams,
+                streams,
                 &w,
                 Some(Box::new(move |b, e| cb(
                     b + ul_for_dl.load(std::sync::atomic::Ordering::Relaxed),
@@ -408,7 +418,7 @@ async fn main() {
             ),
             tester::upload(
                 &cli.upload_url,
-                cli.streams,
+                streams,
                 &w,
                 Some(Box::new(move |b, _| {
                     ul_bytes.store(b, std::sync::atomic::Ordering::Relaxed)
@@ -436,7 +446,7 @@ async fn main() {
         };
         let dl = tester::download(
             &cli.download_url,
-            cli.streams,
+            streams,
             &window(true, dl_cap),
             Some(speed_progress_cb(pb.clone(), duration_s)),
         )
@@ -448,7 +458,7 @@ async fn main() {
             let ul_cap = max_bytes.map(|m| m.saturating_sub(dl.bytes + dl.warmup_bytes));
             let ul = tester::upload(
                 &cli.upload_url,
-                cli.streams,
+                streams,
                 &window(true, ul_cap),
                 Some(speed_progress_cb(pb.clone(), duration_s)),
             )
@@ -500,7 +510,7 @@ async fn main() {
         "mode": if test_combined { "combined" } else { "sequential" },
         "server_host": server_host,
         "server_ip": ping.ip.map(|ip| ip.to_string()),
-        "streams": cli.streams,
+        "streams": streams,
         "ping_ms": ping.avg_ms,
         "ping_low_ms": ping.low_ms,
         "ping_high_ms": ping.high_ms,

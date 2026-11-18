@@ -232,14 +232,19 @@ fn render_speed(r: &serde_json::Value, verbose: bool) {
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
-        let ratio = if dl > 0.0 { ul / dl } else { 0.0 };
+        // No ratio when either side failed: 0.00x reads like a measurement.
+        let ratio = if dl > 0.0 && ul > 0.0 {
+            format!("   {}", format!("↑/↓ {:.2}x", ul / dl).dimmed())
+        } else {
+            String::new()
+        };
         println!(
-            "  {}   {}   {}   {}   {}{}",
+            "  {}   {}   {}   {}{}{}",
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
             fmt_speed(ul),
             format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed(),
-            format!("↑/↓ {:.2}x", ratio).dimmed(),
+            ratio,
             took("upload_duration_s")
         );
     }
@@ -336,7 +341,20 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
         "Δ".dimmed(),
         format!("+{:.2} ms", bb.delta_ms).bold().cyan(),
         "Grade".dimmed(),
-        grade_str
+        if bb.grade == "?" {
+            format!(
+                "{} {}",
+                grade_str,
+                format!(
+                    "(only {} sample{}, test too short to grade)",
+                    bb.samples,
+                    if bb.samples == 1 { "" } else { "s" }
+                )
+                .dimmed()
+            )
+        } else {
+            grade_str
+        }
     );
     // Per-direction p90 under load, like Ookla's per-stage loaded latency.
     let dir = |arrow: &str, v: Option<f64>| {

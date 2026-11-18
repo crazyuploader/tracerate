@@ -11,7 +11,12 @@ pub struct BufferbloatResult {
     pub download_loaded_ms: Option<f64>,
     /// p90 latency while uploading; `None` when upload was skipped or no sample was taken.
     pub upload_loaded_ms: Option<f64>,
+    /// Loaded-latency samples behind the grade; below `MIN_GRADED_SAMPLES` the grade is "?".
+    pub samples: usize,
 }
+
+/// Fewest loaded samples that get a grade (about 4 s of testing at one ping per 200 ms).
+pub const MIN_GRADED_SAMPLES: usize = 20;
 
 /// Nearest-rank percentile of a sample list. `pct` is clamped to [0, 100]:
 /// p0 returns the min, p100 the max. Returns 0.0 for an empty list so
@@ -72,11 +77,19 @@ pub fn from_samples(
     let p90 = |s: &[f64]| (!s.is_empty()).then(|| util::round2(percentile(s, 90.0)));
     let loaded = percentile(&all, 90.0);
     let delta = (loaded - idle).max(0.0);
+    // With few samples, p90 is the worst one: a single 1 s SYN retransmit on a
+    // short test read as Grade F. Report the numbers, but do not grade them.
+    let grade = if all.len() < MIN_GRADED_SAMPLES {
+        "?"
+    } else {
+        grade(delta)
+    };
     Some(BufferbloatResult {
         idle_ms: util::round2(idle),
         loaded_ms: util::round2(loaded),
         delta_ms: util::round2(delta),
-        grade: grade(delta).to_string(),
+        grade: grade.to_string(),
+        samples: all.len(),
         download_loaded_ms: p90(download),
         upload_loaded_ms: p90(upload),
     })
@@ -138,12 +151,22 @@ mod tests {
 
     #[test]
     fn from_samples_grades_delta_and_splits_directions() {
-        let r = from_samples(Some(20.0), &[60.0; 10], &[]).unwrap();
+        let r = from_samples(Some(20.0), &[60.0; 20], &[]).unwrap();
         assert_eq!(r.loaded_ms, 60.0);
         assert_eq!(r.delta_ms, 40.0);
         assert_eq!(r.grade, "B");
         assert_eq!(r.download_loaded_ms, Some(60.0));
         assert_eq!(r.upload_loaded_ms, None);
+    }
+
+    #[test]
+    fn from_samples_too_few_is_ungraded() {
+        // One SYN retransmit among a few samples would otherwise read as Grade F.
+        let mut s = vec![80.0; 11];
+        s.push(1080.0);
+        let r = from_samples(Some(75.0), &s, &[]).unwrap();
+        assert_eq!(r.grade, "?");
+        assert_eq!(r.samples, 12);
     }
 
     // --- grade boundaries ---
