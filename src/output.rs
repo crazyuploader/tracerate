@@ -368,6 +368,16 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
 fn render_regions(regions: &[RegionResult]) {
     section("Regional latency");
 
+    if regions.is_empty() {
+        println!(
+            "  {}",
+            "Skipped: the regional test servers have no IPv6 addresses. Run without -6 to measure."
+                .dimmed()
+        );
+        println!();
+        return;
+    }
+
     let scale = regions.iter().filter_map(|r| r.ms).fold(200.0, f64::max);
 
     let mut ordered = regions.to_vec();
