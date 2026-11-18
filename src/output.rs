@@ -62,7 +62,7 @@ pub fn render(
     duration_s: u64,
 ) {
     render_connection(info, dns_ms, started_at, duration_s);
-    render_speed(r);
+    render_speed(r, verbose);
 
     if let Some(bb) = bb {
         render_bufferbloat(bb, verbose);
@@ -171,8 +171,31 @@ fn render_connection(info: &InfoResult, dns_ms: Option<f64>, started_at: &str, d
 /// // Prints the formatted Speed section to stdout
 /// render_speed(&data);
 /// ```
-fn render_speed(r: &serde_json::Value) {
+fn render_speed(r: &serde_json::Value, verbose: bool) {
     section("Speed");
+
+    let num = |k: &str| r.get(k).and_then(|v| v.as_f64());
+    // Verbose-only "in 14.1s" suffix: how long the window ran before a stable stop.
+    let took = |k: &str| match (verbose, num(k)) {
+        (true, Some(s)) => format!("   {}", format!("in {:.1}s", s).dimmed()),
+        _ => String::new(),
+    };
+
+    if verbose {
+        let host = r.get("server_host").and_then(|v| v.as_str()).unwrap_or("?");
+        let ip = r
+            .get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unresolved");
+        let streams = r.get("streams").and_then(|v| v.as_u64()).unwrap_or(0);
+        println!(
+            "  {}   {} {}   {}",
+            format!("{:<8}", "Server").dimmed(),
+            host,
+            format!("({})", ip).dimmed(),
+            format!("· {} streams", streams).dimmed()
+        );
+    }
 
     let dl = r
         .get("download_mbps")
@@ -191,22 +214,24 @@ fn render_speed(r: &serde_json::Value) {
     let scale = dl.max(ul).max(100.0);
 
     println!(
-        "  {}   {}   {}   {}",
+        "  {}   {}   {}   {}{}",
         format!("{:<8}", "Download").dimmed(),
         bar(dl, scale, 20).cyan(),
         fmt_speed(dl),
-        format!("({:.1} MB)", util::bytes_to_mb(dl_bytes)).dimmed()
+        format!("({:.1} MB)", util::bytes_to_mb(dl_bytes)).dimmed(),
+        took("download_duration_s")
     );
 
     if r.get("upload_mbps").and_then(|v| v.as_f64()).is_some() {
         let ratio = if dl > 0.0 { ul / dl } else { 0.0 };
         println!(
-            "  {}   {}   {}   {}   {}",
+            "  {}   {}   {}   {}   {}{}",
             format!("{:<8}", "Upload").dimmed(),
             bar(ul, scale, 20).cyan(),
             fmt_speed(ul),
             format!("({:.1} MB)", util::bytes_to_mb(ul_bytes)).dimmed(),
-            format!("↑/↓ {:.2}x", ratio).dimmed()
+            format!("↑/↓ {:.2}x", ratio).dimmed(),
+            took("upload_duration_s")
         );
     }
 
@@ -239,17 +264,35 @@ fn render_speed(r: &serde_json::Value) {
         "· 0% conn. fail".green().to_string()
     };
 
+    let ping_range = match (verbose, num("ping_low_ms"), num("ping_high_ms")) {
+        (true, Some(lo), Some(hi)) => {
+            format!(
+                "   {}",
+                format!("low {:.2} · high {:.2} ms", lo, hi).dimmed()
+            )
+        }
+        _ => String::new(),
+    };
     println!(
-        "  {}   {}   {}",
+        "  {}   {}   {}{}",
         format!("{:<8}", "Ping").dimmed(),
         format!("{:.2} ms", ping).bold().cyan(),
-        loss_str
+        loss_str,
+        ping_range
     );
     println!(
         "  {}   {}",
         format!("{:<8}", "Jitter").dimmed(),
         format!("{:.2} ms", jitter).bold().cyan()
     );
+    if let Some(mb) = num("total_data_mb") {
+        println!(
+            "  {}   {}   {}",
+            format!("{:<8}", "Data").dimmed(),
+            format!("{:.1} MB", mb).bold().cyan(),
+            "total, incl. warm-up and bufferbloat".dimmed()
+        );
+    }
     println!();
 }
 

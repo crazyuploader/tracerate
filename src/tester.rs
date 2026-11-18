@@ -86,29 +86,22 @@ pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
 /// lookup and cold-path costs do not show up as latency or jitter. Then
 /// `attempts` sequential TCP connects are made to the resolved address.
 ///
-/// # Returns
-///
-/// A tuple containing:
-/// - `Option<f64>`: average round-trip time in milliseconds rounded to two decimals, or `None` if all attempts failed.
-/// - `f64`: packet loss percentage rounded to one decimal (`0.0`–`100.0`).
-/// - `Option<f64>`: jitter in milliseconds (mean absolute difference between consecutive successful samples) rounded to two decimals, or `None` if no attempts succeeded.
-///
-/// # Examples
-///
-/// ```
-/// # tokio_test::block_on(async {
-/// let (avg, loss, jitter) = crate::tester::ping("example.com", 80, 3).await;
-/// // avg and jitter are `Option<f64>`; loss is always a `f64`.
-/// assert!(loss >= 0.0 && loss <= 100.0);
-/// # });
-/// ```
-pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, Option<f64>) {
+/// Returns a [`Ping`]; the latency fields are `None` when every attempt failed.
+pub async fn ping(host: &str, port: u16, attempts: usize) -> Ping {
+    let failed = |ip| Ping {
+        ip,
+        avg_ms: None,
+        loss_pct: 100.0,
+        jitter_ms: None,
+        low_ms: None,
+        high_ms: None,
+    };
     let addr = match tokio::net::lookup_host((host, port)).await {
         Ok(mut addrs) => match addrs.next() {
             Some(a) => a,
-            None => return (None, 100.0, None),
+            None => return failed(None),
         },
-        Err(_) => return (None, 100.0, None),
+        Err(_) => return failed(None),
     };
 
     // Warm-up connect: not counted.
@@ -123,17 +116,33 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> (Option<f64>, f64, 
 
     let valid: Vec<f64> = results.into_iter().flatten().collect();
     if valid.is_empty() {
-        return (None, 100.0, None);
+        return failed(Some(addr.ip()));
     }
 
     let avg = valid.iter().sum::<f64>() / valid.len() as f64;
     let loss = ((attempts - valid.len()) as f64 / attempts as f64) * 100.0;
 
-    (
-        Some(util::round2(avg)),
-        util::round1(loss),
-        Some(util::round2(jitter(&valid))),
-    )
+    Ping {
+        ip: Some(addr.ip()),
+        avg_ms: Some(util::round2(avg)),
+        loss_pct: util::round1(loss),
+        jitter_ms: Some(util::round2(jitter(&valid))),
+        low_ms: Some(util::round2(valid.iter().copied().fold(f64::MAX, f64::min))),
+        high_ms: Some(util::round2(valid.iter().copied().fold(0.0, f64::max))),
+    }
+}
+
+/// Result of [`ping`]. Times are milliseconds rounded to two decimals.
+pub struct Ping {
+    /// Address the host resolved to and was pinged at.
+    pub ip: Option<std::net::IpAddr>,
+    pub avg_ms: Option<f64>,
+    /// TCP connect-failure rate, 0.0–100.0.
+    pub loss_pct: f64,
+    /// Mean absolute difference between consecutive successful samples.
+    pub jitter_ms: Option<f64>,
+    pub low_ms: Option<f64>,
+    pub high_ms: Option<f64>,
 }
 
 /// Mean absolute difference between consecutive samples (the usual jitter
@@ -180,6 +189,95 @@ async fn tcp_connect_ms<A: tokio::net::ToSocketAddrs>(addr: A) -> Option<f64> {
 
 type ProgressCallback = Box<dyn Fn(u64, f64) + Send + Sync>;
 
+/// Result of a download or upload measurement.
+pub struct Transfer {
+    /// Speed over the measurement window, rounded to two decimals.
+    pub mbps: f64,
+    /// Bytes moved inside the measurement window.
+    pub bytes: u64,
+    /// Bytes moved during the warm-up before the window; not part of `mbps`.
+    pub warmup_bytes: u64,
+    /// Length of the measurement window in seconds; shorter than requested after a stable stop.
+    pub elapsed_s: f64,
+}
+
+/// A stable stop never ends a measurement before this many seconds.
+const STABLE_MIN_S: f64 = 8.0;
+/// Number of one-second samples of the running average that must agree.
+const STABLE_SAMPLES: usize = 4;
+/// Largest spread between those samples, as a fraction of the highest one.
+const STABLE_SPREAD: f64 = 0.02;
+
+/// True when the last `STABLE_SAMPLES` running-average samples sit within `STABLE_SPREAD` of each other.
+fn is_stable(avgs: &[f64]) -> bool {
+    if avgs.len() < STABLE_SAMPLES {
+        return false;
+    }
+    let tail = &avgs[avgs.len() - STABLE_SAMPLES..];
+    let hi = tail.iter().copied().fold(0.0, f64::max);
+    let lo = tail.iter().copied().fold(f64::MAX, f64::min);
+    hi > 0.0 && (hi - lo) / hi <= STABLE_SPREAD
+}
+
+/// Runs the warm-up and measurement window shared by download and upload,
+/// then signals `stop`. With `stable_stop`, the window ends early once the
+/// running average speed stops changing.
+async fn measure_window(
+    total_bytes: &AtomicU64,
+    warmup_bytes: &AtomicU64,
+    measure_start: &AtomicU64,
+    stop: &AtomicBool,
+    duration_s: f64,
+    stable_stop: bool,
+    on_progress: Option<ProgressCallback>,
+) -> Transfer {
+    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
+
+    total_bytes.store(0, Ordering::Relaxed);
+    let start_instant = Instant::now();
+    measure_start.store(1, Ordering::Relaxed);
+
+    let end_at = start_instant + std::time::Duration::from_secs_f64(duration_s);
+    let mut avgs = Vec::new();
+
+    while Instant::now() < end_at {
+        let bytes = total_bytes.load(Ordering::Relaxed);
+        let elapsed = start_instant.elapsed().as_secs_f64();
+        if let Some(ref cb) = on_progress {
+            cb(bytes, elapsed);
+        }
+        if stable_stop && elapsed >= (avgs.len() + 1) as f64 {
+            avgs.push(util::bytes_to_mbps(bytes, elapsed));
+            if elapsed >= STABLE_MIN_S && is_stable(&avgs) {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    stop.store(true, Ordering::Relaxed);
+
+    let elapsed = start_instant.elapsed().as_secs_f64();
+    let bytes = total_bytes.load(Ordering::Relaxed);
+    let warmup_bytes = warmup_bytes.load(Ordering::Relaxed);
+
+    if elapsed <= 0.0 || bytes == 0 {
+        return Transfer {
+            mbps: 0.0,
+            bytes: 0,
+            warmup_bytes,
+            elapsed_s: elapsed,
+        };
+    }
+
+    Transfer {
+        mbps: util::round2(util::bytes_to_mbps(bytes, elapsed)),
+        bytes,
+        warmup_bytes,
+        elapsed_s: elapsed,
+    }
+}
+
 /// Measures download throughput by concurrently fetching a URL template across multiple streams for a fixed duration.
 ///
 /// The `url_template` must contain the substring `"{bytes}"` which will be replaced with a large value to trigger a full-range download. The function spawns `streams` concurrent workers that read response bodies and accumulate received bytes; if `on_progress` is provided it will be invoked periodically with the current total bytes and elapsed seconds.
@@ -193,7 +291,7 @@ type ProgressCallback = Box<dyn Fn(u64, f64) + Send + Sync>;
 ///
 /// # Returns
 ///
-/// A tuple where the first element is the measured download speed in megabits per second (rounded to two decimal places) and the second element is the total number of bytes transferred during the measurement window.
+/// A [`Transfer`]. With `stable_stop`, the window can end before `duration_s` once the speed settles.
 ///
 /// # Examples
 ///
@@ -207,18 +305,17 @@ type ProgressCallback = Box<dyn Fn(u64, f64) + Send + Sync>;
 /// async fn example_download() {
 ///     // Use Cloudflare speed test template as an example.
 ///     let template = "https://speed.cloudflare.com/__down?bytes={bytes}";
-///     let (mbps, bytes) = download(template, 1.0, 1, None).await;
-///     // Result is a tuple (mbps, bytes); values may be zero in constrained environments.
-///     assert!(bytes >= 0);
-///     assert!(mbps >= 0.0);
+///     let t = download(template, 1.0, 1, false, None).await;
+///     assert!(t.mbps >= 0.0);
 /// }
 /// ```
 pub async fn download(
     url_template: &str,
     duration_s: f64,
     streams: usize,
+    stable_stop: bool,
     on_progress: Option<ProgressCallback>,
-) -> (f64, u64) {
+) -> Transfer {
     let url = url_template.replace("{bytes}", "1000000000");
     // The client timeout covers the whole response body, so it must outlast
     // the warmup plus the measurement window. A fixed 30s killed every stream
@@ -227,6 +324,7 @@ pub async fn download(
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
+    let warmup_bytes = Arc::new(AtomicU64::new(0));
     let measure_start = Arc::new(AtomicU64::new(0));
 
     let mut handles = Vec::new();
@@ -236,6 +334,7 @@ pub async fn download(
         let url = url.clone();
         let stop = stop.clone();
         let total_bytes = total_bytes.clone();
+        let warmup_bytes = warmup_bytes.clone();
         let measure_start = measure_start.clone();
 
         let handle = task::spawn(async move {
@@ -258,17 +357,17 @@ pub async fn download(
                         return;
                     }
 
-                    let mstart = measure_start.load(Ordering::Relaxed);
-                    if mstart == 0 {
-                        continue;
-                    }
-
                     let chunk = match chunk {
                         Ok(c) => c,
                         Err(_) => return,
                     };
 
-                    total_bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    let counter = if measure_start.load(Ordering::Relaxed) == 0 {
+                        &warmup_bytes
+                    } else {
+                        &total_bytes
+                    };
+                    counter.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                 }
 
                 // An empty body would spin the loop without measuring anything.
@@ -281,40 +380,22 @@ pub async fn download(
         handles.push(handle);
     }
 
-    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
-
-    total_bytes.store(0, Ordering::Relaxed);
-    let start_instant = Instant::now();
-    measure_start.store(1, Ordering::Relaxed);
-
-    let end_at = start_instant + std::time::Duration::from_secs_f64(duration_s);
-
-    while Instant::now() < end_at {
-        if let Some(ref cb) = on_progress {
-            let bytes = total_bytes.load(Ordering::Relaxed);
-            let elapsed = start_instant.elapsed().as_secs_f64();
-            cb(bytes, elapsed);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    stop.store(true, Ordering::Relaxed);
-
-    let elapsed = start_instant.elapsed().as_secs_f64();
-    let bytes_transferred = total_bytes.load(Ordering::Relaxed);
+    let result = measure_window(
+        &total_bytes,
+        &warmup_bytes,
+        &measure_start,
+        &stop,
+        duration_s,
+        stable_stop,
+        on_progress,
+    )
+    .await;
 
     for handle in handles {
         let _ = handle.await;
     }
 
-    if elapsed <= 0.0 || bytes_transferred == 0 {
-        return (0.0, 0);
-    }
-
-    (
-        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
-        bytes_transferred,
-    )
+    result
 }
 
 /// Performs concurrent HTTP POST uploads of random data to the given `url` for approximately `duration_s`, using `streams` parallel workers and optionally reporting progress via `on_progress`.
@@ -328,7 +409,7 @@ pub async fn download(
 /// - `on_progress`: optional callback invoked periodically with `(bytes_uploaded, elapsed_seconds)`.
 ///
 /// # Returns
-/// A tuple `(mbps, total_bytes)` where `mbps` is the measured upload speed in megabits per second (rounded to two decimals) and `total_bytes` is the total number of bytes uploaded.
+/// A [`Transfer`]. With `stable_stop`, the window can end before `duration_s` once the speed settles.
 ///
 /// # Examples
 ///
@@ -336,17 +417,17 @@ pub async fn download(
 /// # use std::sync::Arc;
 /// # use tokio;
 /// # async fn _run() {
-/// let (mbps, bytes) = crate::tester::upload("https://speed.cloudflare.com/__up", 1.0, 2, None).await;
-/// assert!(mbps >= 0.0);
-/// assert!(bytes >= 0);
+/// let t = crate::tester::upload("https://speed.cloudflare.com/__up", 1.0, 2, false, None).await;
+/// assert!(t.mbps >= 0.0);
 /// # }
 /// ```
 pub async fn upload(
     url: &str,
     duration_s: f64,
     streams: usize,
+    stable_stop: bool,
     on_progress: Option<ProgressCallback>,
-) -> (f64, u64) {
+) -> Transfer {
     let data: Arc<Vec<u8>> = Arc::new(
         (0..UPLOAD_CHUNK_BYTES)
             .map(|_| rand::random::<u8>())
@@ -357,6 +438,7 @@ pub async fn upload(
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
+    let warmup_bytes = Arc::new(AtomicU64::new(0));
     let measure_start = Arc::new(AtomicU64::new(0));
 
     let mut handles = Vec::new();
@@ -366,6 +448,7 @@ pub async fn upload(
         let url = url.to_string();
         let stop = stop.clone();
         let total_bytes = total_bytes.clone();
+        let warmup_bytes = warmup_bytes.clone();
         let measure_start = measure_start.clone();
         let data = data.clone();
 
@@ -388,12 +471,14 @@ pub async fn upload(
                     let data = data.clone();
                     let stop = stop.clone();
                     let total_bytes = total_bytes.clone();
+                    let warmup_bytes = warmup_bytes.clone();
                     let measure_start = measure_start.clone();
                     let sent = sent.clone();
                     move |offset| {
                         let data = data.clone();
                         let stop = stop.clone();
                         let total_bytes = total_bytes.clone();
+                        let warmup_bytes = warmup_bytes.clone();
                         let measure_start = measure_start.clone();
                         let sent = sent.clone();
                         async move {
@@ -405,6 +490,8 @@ pub async fn upload(
                             if measure_start.load(Ordering::Relaxed) != 0 {
                                 total_bytes.fetch_add(piece.len() as u64, Ordering::Relaxed);
                                 sent.fetch_add(piece.len() as u64, Ordering::Relaxed);
+                            } else {
+                                warmup_bytes.fetch_add(piece.len() as u64, Ordering::Relaxed);
                             }
                             Some((Ok::<_, std::io::Error>(piece), end))
                         }
@@ -438,40 +525,22 @@ pub async fn upload(
         handles.push(handle);
     }
 
-    tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
-
-    total_bytes.store(0, Ordering::Relaxed);
-    let start_instant = Instant::now();
-    measure_start.store(1, Ordering::Relaxed);
-
-    let end_at = start_instant + std::time::Duration::from_secs_f64(duration_s);
-
-    while Instant::now() < end_at {
-        if let Some(ref cb) = on_progress {
-            let bytes = total_bytes.load(Ordering::Relaxed);
-            let elapsed = start_instant.elapsed().as_secs_f64();
-            cb(bytes, elapsed);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
-    stop.store(true, Ordering::Relaxed);
-
-    let elapsed = start_instant.elapsed().as_secs_f64();
-    let bytes_transferred = total_bytes.load(Ordering::Relaxed);
+    let result = measure_window(
+        &total_bytes,
+        &warmup_bytes,
+        &measure_start,
+        &stop,
+        duration_s,
+        stable_stop,
+        on_progress,
+    )
+    .await;
 
     for handle in handles {
         let _ = handle.await;
     }
 
-    if elapsed <= 0.0 || bytes_transferred == 0 {
-        return (0.0, 0);
-    }
-
-    (
-        util::round2(util::bytes_to_mbps(bytes_transferred, elapsed)),
-        bytes_transferred,
-    )
+    result
 }
 
 #[cfg(test)]
@@ -502,6 +571,24 @@ mod tests {
         // max - min would report 40 ms here.
         let j = jitter(&[44.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0]);
         assert!((j - 40.0 / 9.0).abs() < 1e-9);
+    }
+
+    // --- is_stable ---
+
+    #[test]
+    fn is_stable_needs_enough_samples() {
+        assert!(!is_stable(&[50.0, 50.0, 50.0]));
+    }
+
+    #[test]
+    fn is_stable_flat_tail_is_stable() {
+        assert!(is_stable(&[10.0, 40.0, 50.0, 50.5, 50.2, 49.8]));
+    }
+
+    #[test]
+    fn is_stable_rising_or_zero_is_not() {
+        assert!(!is_stable(&[40.0, 44.0, 48.0, 52.0]));
+        assert!(!is_stable(&[0.0, 0.0, 0.0, 0.0]));
     }
 
     // --- build_client ---

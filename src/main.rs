@@ -24,10 +24,10 @@ struct Cli {
 
     #[arg(
         long,
-        default_value_t = 15.0,
+        default_value_t = 30.0,
         value_parser = parse_duration,
         hide_default_value = true,
-        help = "Duration in seconds for each download/upload measurement [default: 15s]"
+        help = "Maximum seconds for each download/upload measurement; stops early once the speed is stable [default: 30s]"
     )]
     duration: f64,
 
@@ -50,7 +50,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = false,
-        help = "Run a combined download+upload test simultaneously after sequential tests"
+        help = "Run download and upload simultaneously instead of one after the other"
     )]
     combined: bool,
 
@@ -77,7 +77,7 @@ struct Cli {
         short,
         long,
         default_value_t = false,
-        help = "Show extra detail such as data transferred during bufferbloat test"
+        help = "Show extra detail: server IP, streams, ping range, test durations, bufferbloat data"
     )]
     verbose: bool,
 }
@@ -114,11 +114,30 @@ fn parse_streams(s: &str) -> Result<usize, String> {
     }
 }
 
+/// Same switch the report uses: off for --no-color, NO_COLOR, or a non-terminal stdout.
+fn colors_on() -> bool {
+    colored::control::SHOULD_COLORIZE.should_colorize()
+}
+
+/// Bar style in `color`; the bar and its message share the color.
+/// `wide_msg` cuts the message to the terminal width, so a bar never wraps
+/// and the line count used to erase the bars stays right.
+fn bar_style(color: &str) -> indicatif::ProgressStyle {
+    let c = if colors_on() {
+        format!(".{color}")
+    } else {
+        String::new()
+    };
+    indicatif::ProgressStyle::default_bar()
+        .template(&format!("{{prefix}}  {{bar:20{c}}}  {{wide_msg:{c}}}"))
+        .expect("invalid progress bar template")
+        .progress_chars("▰▱")
+}
+
 /// Creates a progress bar prefixed with `prefix` and configured for throughput-style updates.
 ///
-/// The returned `indicatif::ProgressBar` has a total length of 1000, uses a cyan 20-character
-/// bar with the given `prefix` followed by the current message, and is initialized with the
-/// message "…".
+/// The returned `indicatif::ProgressBar` has a total length of 1000, starts as a cyan
+/// 20-character bar, and is initialized with the message "…".
 ///
 /// # Examples
 ///
@@ -127,29 +146,73 @@ fn parse_streams(s: &str) -> Result<usize, String> {
 /// assert_eq!(pb.length(), Some(1000));
 /// ```
 fn make_progress_bar(prefix: &str) -> indicatif::ProgressBar {
-    let pb = indicatif::ProgressBar::new(1000);
-    pb.set_style(
-        indicatif::ProgressStyle::default_bar()
-            .template(&format!("{}  {{bar:20.cyan}}  {{msg}}", prefix))
-            .expect("invalid progress bar template")
-            .progress_chars("▰▱"),
-    );
+    let pb = indicatif::ProgressBar::new(1000)
+        .with_style(bar_style("cyan"))
+        .with_prefix(prefix.to_string());
     pb.set_message("…");
     pb
+}
+
+fn progress_msg(mbps: f64, elapsed: f64, bytes: u64) -> String {
+    format!(
+        "{:.2} Mbps  {:.1}s  {:.1} MB",
+        mbps,
+        elapsed,
+        util::bytes_to_mb(bytes)
+    )
+}
+
+/// Color for the live (last ~2s) speed relative to the run average so far.
+fn speed_color(live_mbps: f64, avg_mbps: f64) -> &'static str {
+    if live_mbps >= avg_mbps * 0.9 {
+        "green"
+    } else if live_mbps >= avg_mbps * 0.7 {
+        "yellow"
+    } else {
+        "red"
+    }
+}
+
+/// Leaves the bar on screen with the final speed and data used.
+fn finish_bar(pb: &indicatif::ProgressBar, t: &tester::Transfer) {
+    pb.finish_with_message(progress_msg(t.mbps, t.elapsed_s, t.bytes));
+    // indicatif leaves the cursor on the finished line; move off it so the next bar starts below.
+    if !pb.is_hidden() {
+        eprintln!();
+    }
 }
 
 fn speed_progress_cb(
     pb: indicatif::ProgressBar,
     duration_s: f64,
 ) -> Box<dyn Fn(u64, f64) + Send + Sync> {
+    // (elapsed, bytes) samples covering the last two seconds, and the color in use.
+    // Two seconds, not one, so a jittery link does not flip colors every tick.
+    let state = std::sync::Mutex::new((std::collections::VecDeque::<(f64, u64)>::new(), "cyan"));
     Box::new(move |bytes: u64, elapsed: f64| {
         pb.set_position(((elapsed / duration_s).min(1.0) * 1000.0) as u64);
-        if elapsed > 0.0 {
-            pb.set_message(format!(
-                "{:.2} Mbps  {:.1}s",
-                util::bytes_to_mbps(bytes, elapsed),
-                elapsed
-            ));
+        if elapsed <= 0.0 {
+            return;
+        }
+        let avg = util::bytes_to_mbps(bytes, elapsed);
+        pb.set_message(progress_msg(avg, elapsed, bytes));
+
+        let mut guard = state.lock().unwrap_or_else(|e| e.into_inner());
+        let (window, color) = &mut *guard;
+        window.push_back((elapsed, bytes));
+        while window.len() > 1 && window[1].0 <= elapsed - 2.0 {
+            window.pop_front();
+        }
+        // Speeds are noisy while streams ramp up; judge drops only after 5s.
+        let (t0, b0) = window[0];
+        if elapsed >= 5.0 && elapsed > t0 {
+            // saturating: a failed upload request takes its bytes back.
+            let live = util::bytes_to_mbps(bytes.saturating_sub(b0), elapsed - t0);
+            let new = speed_color(live, avg);
+            if new != *color {
+                *color = new;
+                pb.set_style(bar_style(new));
+            }
         }
     })
 }
@@ -169,7 +232,11 @@ fn make_spinner() -> indicatif::ProgressBar {
     let s = indicatif::ProgressBar::new_spinner();
     s.set_style(
         indicatif::ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg}")
+            .template(if colors_on() {
+                "{spinner:.cyan} {msg}"
+            } else {
+                "{spinner} {msg}"
+            })
             .expect("invalid spinner template"),
     );
     s.enable_steady_tick(std::time::Duration::from_millis(100));
@@ -231,6 +298,12 @@ async fn main() {
     let test_extras = !cli.quick;
     let test_combined = cli.combined;
     let quiet = cli.output == "json";
+    // Same check indicatif uses to decide whether bars are drawn.
+    let console_shown = !quiet && std::io::IsTerminal::is_terminal(&std::io::stderr());
+    // Hide the cursor while bars draw: indicatif pads lines to full width, leaving it blinking at the far right.
+    if console_shown {
+        eprint!("\x1b[?25l");
+    }
 
     if cli.output == "pretty" {
         output::print_header();
@@ -249,116 +322,104 @@ async fn main() {
 
     // ISP lookup, DNS timing, and the ping baseline are independent — run
     // them concurrently.
-    let (info, dns_ms, (ping_ms, loss_pct, jitter_ms)) = tokio::join!(
+    let (info, dns_ms, ping) = tokio::join!(
         info::get_ip_info(),
         info::measure_dns(&server_host),
         tester::ping(&server_host, server_port, 10),
     );
 
-    let (download_mbps, download_bytes) = if quiet {
-        tester::download(&cli.download_url, duration_s, cli.streams, None).await
-    } else {
-        spinner.finish_and_clear();
+    spinner.finish_and_clear();
 
-        let pb = make_progress_bar("  Downloading —");
-        let result = tester::download(
-            &cli.download_url,
-            duration_s,
-            cli.streams,
-            Some(speed_progress_cb(pb.clone(), duration_s)),
-        )
-        .await;
-
-        pb.finish_and_clear();
-        result
-    };
-
-    // New spinner for post-download phases (original was finish_and_clear'd above)
-    let mut spinner = if !quiet {
-        make_spinner()
-    } else {
-        indicatif::ProgressBar::hidden()
-    };
-
-    let (upload_mbps, upload_bytes) = if test_upload {
+    let new_bar = |prefix: &str| {
         if quiet {
-            let (s, b) = tester::upload(&cli.upload_url, duration_s, cli.streams, None).await;
-            (Some(s), b)
+            indicatif::ProgressBar::hidden()
         } else {
-            spinner.finish_and_clear();
+            make_progress_bar(prefix)
+        }
+    };
 
-            let pb = make_progress_bar("  Uploading   —");
-            let (speed, bytes) = tester::upload(
+    // Stable stop is off for --combined: one direction ending early would
+    // leave the other measured without the load the mode exists for.
+    let (download, upload) = if test_combined {
+        let pb = new_bar("  Combined    —");
+        // Download callback drives the bar with dl+ul bytes; upload callback only shares its count.
+        let ul_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let ul_for_dl = ul_bytes.clone();
+        let cb = speed_progress_cb(pb.clone(), duration_s);
+        let (dl, ul) = tokio::join!(
+            tester::download(
+                &cli.download_url,
+                duration_s,
+                cli.streams,
+                false,
+                Some(Box::new(move |b, e| cb(
+                    b + ul_for_dl.load(std::sync::atomic::Ordering::Relaxed),
+                    e
+                ))),
+            ),
+            tester::upload(
                 &cli.upload_url,
                 duration_s,
                 cli.streams,
+                false,
+                Some(Box::new(move |b, _| {
+                    ul_bytes.store(b, std::sync::atomic::Ordering::Relaxed)
+                })),
+            ),
+        );
+        finish_bar(
+            &pb,
+            &tester::Transfer {
+                mbps: dl.mbps + ul.mbps,
+                bytes: dl.bytes + ul.bytes,
+                warmup_bytes: 0,
+                elapsed_s: dl.elapsed_s,
+            },
+        );
+        (dl, Some(ul))
+    } else {
+        let pb = new_bar("  Downloading —");
+        let dl = tester::download(
+            &cli.download_url,
+            duration_s,
+            cli.streams,
+            true,
+            Some(speed_progress_cb(pb.clone(), duration_s)),
+        )
+        .await;
+        finish_bar(&pb, &dl);
+
+        let ul = if test_upload {
+            let pb = new_bar("  Uploading   —");
+            let ul = tester::upload(
+                &cli.upload_url,
+                duration_s,
+                cli.streams,
+                true,
                 Some(speed_progress_cb(pb.clone(), duration_s)),
             )
             .await;
-
-            pb.finish_and_clear();
-            spinner = make_spinner();
-
-            (Some(speed), bytes)
-        }
-    } else {
-        (None, 0)
-    };
-
-    let (combined_dl_mbps, combined_ul_mbps, combined_bytes) = if test_combined {
-        if quiet {
-            let ((dl, dl_b), (ul, ul_b)) = tokio::join!(
-                tester::download(&cli.download_url, duration_s, cli.streams, None),
-                tester::upload(&cli.upload_url, duration_s, cli.streams, None),
-            );
-            (Some(dl), Some(ul), Some(dl_b + ul_b))
+            finish_bar(&pb, &ul);
+            Some(ul)
         } else {
-            spinner.finish_and_clear();
+            None
+        };
+        (dl, ul)
+    };
+    let download_mbps = download.mbps;
+    let speed_bytes = download.bytes
+        + download.warmup_bytes
+        + upload.as_ref().map_or(0, |u| u.bytes + u.warmup_bytes);
 
-            // Single bar: dl callback drives display, ul callback updates shared atomic.
-            // Avoids MultiProgress cursor-tracking bugs during the 1.5s warmup sleep.
-            let ul_bytes_shared = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let ul_bytes_for_cb = ul_bytes_shared.clone();
-
-            let pb = make_progress_bar("  Combined   —");
-
-            let pb_clone = pb.clone();
-            let ul_bytes_for_dl = ul_bytes_shared.clone();
-
-            let ((dl, dl_b), (ul, ul_b)) = tokio::join!(
-                tester::download(
-                    &cli.download_url,
-                    duration_s,
-                    cli.streams,
-                    Some(Box::new(move |dl_bytes, elapsed| {
-                        let ul_bytes = ul_bytes_for_dl.load(std::sync::atomic::Ordering::Relaxed);
-                        let ratio = (elapsed / duration_s).min(1.0);
-                        pb_clone.set_position((ratio * 1000.0) as u64);
-                        if elapsed > 0.0 {
-                            let total_mbps =
-                                (dl_bytes + ul_bytes) as f64 * 8.0 / elapsed / 1_000_000.0;
-                            pb_clone
-                                .set_message(format!("{:.2} Mbps  {:.1}s", total_mbps, elapsed));
-                        }
-                    })),
-                ),
-                tester::upload(
-                    &cli.upload_url,
-                    duration_s,
-                    cli.streams,
-                    Some(Box::new(move |ul_bytes, _elapsed| {
-                        ul_bytes_for_cb.store(ul_bytes, std::sync::atomic::Ordering::Relaxed);
-                    })),
-                ),
-            );
-
-            pb.finish_and_clear();
-            spinner = make_spinner();
-
-            (Some(dl), Some(ul), Some(dl_b + ul_b))
+    // Speed bars stay on screen while the remaining tests run; erased before the report.
+    let bar_lines = if test_combined || !test_upload { 1 } else { 2 } + 1;
+    let spinner = if !quiet {
+        if console_shown {
+            eprintln!();
         }
+        make_spinner()
     } else {
-        (None, None, None)
+        indicatif::ProgressBar::hidden()
     };
 
     let bufferbloat = if test_extras {
@@ -375,18 +436,34 @@ async fn main() {
         None
     };
 
+    let upload_mbps = upload.as_ref().map(|u| u.mbps);
+    let combined_bytes =
+        test_combined.then(|| download.bytes + upload.as_ref().map_or(0, |u| u.bytes));
+    let total_data_mb =
+        util::bytes_to_mb(speed_bytes) + bufferbloat.as_ref().map_or(0.0, |b| b.data_used_mb);
+
     let result = serde_json::json!({
         "name": tester::SERVER.name,
-        "ping_ms": ping_ms,
-        "packet_loss": loss_pct,
-        "jitter_ms": jitter_ms,
+        "mode": if test_combined { "combined" } else { "sequential" },
+        "server_host": server_host,
+        "server_ip": ping.ip.map(|ip| ip.to_string()),
+        "streams": cli.streams,
+        "ping_ms": ping.avg_ms,
+        "ping_low_ms": ping.low_ms,
+        "ping_high_ms": ping.high_ms,
+        "packet_loss": ping.loss_pct,
+        "jitter_ms": ping.jitter_ms,
         "download_mbps": download_mbps,
-        "download_bytes": download_bytes,
+        "download_bytes": download.bytes,
+        "download_duration_s": util::round1(download.elapsed_s),
         "upload_mbps": upload_mbps,
-        "upload_bytes": upload_bytes,
-        "combined_download_mbps": combined_dl_mbps,
-        "combined_upload_mbps": combined_ul_mbps,
+        "upload_bytes": upload.as_ref().map_or(0, |u| u.bytes),
+        "upload_duration_s": upload.as_ref().map(|u| util::round1(u.elapsed_s)),
+        "combined_download_mbps": combined_bytes.map(|_| download_mbps),
+        "combined_upload_mbps": combined_bytes.and(upload_mbps),
         "combined_bytes": combined_bytes,
+        "warmup_bytes": download.warmup_bytes + upload.as_ref().map_or(0, |u| u.warmup_bytes),
+        "total_data_mb": util::round1(total_data_mb),
         "error": null,
     });
 
@@ -422,6 +499,11 @@ async fn main() {
             std::process::exit(1);
         }
         return;
+    }
+
+    // shortcut: below ~40 columns the prefix and bar alone wrap, leaving fragments; fine for real terminals.
+    if console_shown {
+        eprint!("\x1b[{bar_lines}A\x1b[J\x1b[?25h");
     }
 
     output::render(
@@ -550,6 +632,22 @@ mod tests {
     }
 
     // --- make_spinner ---
+
+    #[test]
+    fn speed_color_tiers() {
+        assert_eq!(speed_color(100.0, 100.0), "green");
+        assert_eq!(speed_color(90.0, 100.0), "green");
+        assert_eq!(speed_color(80.0, 100.0), "yellow");
+        assert_eq!(speed_color(50.0, 100.0), "red");
+    }
+
+    #[test]
+    fn speed_progress_cb_survives_shrinking_bytes() {
+        let pb = indicatif::ProgressBar::new(1000);
+        let cb = speed_progress_cb(pb.clone(), 10.0);
+        cb(5_000_000, 5.0);
+        cb(1_000_000, 6.0);
+    }
 
     #[test]
     fn make_spinner_creates_spinner_bar() {

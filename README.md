@@ -22,11 +22,11 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
 | `tracerate`                    | Full test (download, upload, bufferbloat, regional latency)                                                  |
 | `tracerate --quick`            | Fast test (10s download only, skips upload and extras)                                                       |
-| `tracerate --combined`         | Add a simultaneous download+upload test after sequential tests                                               |
-| `tracerate --duration 30`      | Custom download/upload duration in seconds, 1-300 (default: 15)                                              |
+| `tracerate --combined`         | Run download and upload simultaneously instead of one after the other                                       |
+| `tracerate --duration 30`      | Max download/upload duration in seconds, 1-300; stops early once speed is stable (default: 30)               |
 | `tracerate --streams 8`        | Parallel streams for download/upload, 1-32 (default: 16)                                                     |
 | `tracerate --output json`      | Machine-readable JSON output                                                                                 |
-| `tracerate --verbose`          | Verbose output (e.g. data used during bufferbloat)                                                           |
+| `tracerate --verbose`          | Verbose output: server IP, streams, ping low/high, test durations, bufferbloat data                         |
 | `tracerate --download-url URL` | Custom download URL (must contain `{bytes}`); also sets the ping/DNS host. Bufferbloat still uses Cloudflare |
 | `tracerate --upload-url URL`   | Custom upload (POST) URL                                                                                     |
 | `tracerate --no-color`         | Disable colored output (`NO_COLOR` is also respected)                                                        |
