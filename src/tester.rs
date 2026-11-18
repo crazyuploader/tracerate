@@ -1,6 +1,7 @@
 use futures::StreamExt;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tokio::net::TcpStream;
 use tokio::task;
@@ -36,6 +37,18 @@ const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// whole chunk finishes.
 const UPLOAD_PIECE_BYTES: usize = 64 * 1024;
 
+/// Unspecified address of the IP family forced by `-4`/`-6`. Every HTTP client
+/// binds to it and every ping picks a matching address. Global because clients
+/// are built in several modules that would otherwise all need a new parameter.
+pub static IP_FAMILY: OnceLock<IpAddr> = OnceLock::new();
+
+/// True when `addr` matches the forced IP family, or no family is forced.
+fn family_ok(addr: &SocketAddr) -> bool {
+    IP_FAMILY
+        .get()
+        .is_none_or(|f| f.is_ipv4() == addr.is_ipv4())
+}
+
 /// Builds a `reqwest::Client` configured with the given request timeout.
 ///
 /// `timeout_secs` is the per-request timeout in seconds.
@@ -51,6 +64,7 @@ const UPLOAD_PIECE_BYTES: usize = 64 * 1024;
 pub fn build_client(timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
+        .local_address(IP_FAMILY.get().copied())
         .build()
         .expect("failed to build HTTP client")
 }
@@ -69,6 +83,7 @@ pub fn build_client(timeout_secs: u64) -> reqwest::Client {
 pub fn build_speed_client(timeout_secs: u64) -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
+        .local_address(IP_FAMILY.get().copied())
         .default_headers({
             let mut h = reqwest::header::HeaderMap::new();
             for (k, v) in REQUEST_HEADERS {
@@ -97,7 +112,7 @@ pub async fn ping(host: &str, port: u16, attempts: usize) -> Ping {
         high_ms: None,
     };
     let addr = match tokio::net::lookup_host((host, port)).await {
-        Ok(mut addrs) => match addrs.next() {
+        Ok(mut addrs) => match addrs.find(family_ok) {
             Some(a) => a,
             None => return failed(None),
         },
@@ -156,27 +171,20 @@ fn jitter(samples: &[f64]) -> f64 {
     total / (samples.len() - 1) as f64
 }
 
-/// Measures a single TCP round-trip time to `host:port`.
+/// Measures a single TCP round-trip time to `host:port`, in milliseconds.
 ///
-/// # Returns
-///
-/// `Some(elapsed_ms)` with the elapsed time in milliseconds when the TCP connection completes successfully within 3 seconds, `None` on timeout or any connection error.
-///
-/// # Examples
-///
-/// ```
-/// // Run the async function using a small runtime.
-/// let rt = tokio::runtime::Runtime::new().unwrap();
-/// let elapsed = rt.block_on(async { crate::tcp_ping_once("example.com", 80).await });
-/// // elapsed is either `None` (timeout/error) or a non-negative millisecond value
-/// assert!(elapsed.is_none() || elapsed.unwrap() >= 0.0);
-/// ```
+/// The host is resolved before the timer starts, to an address of the forced
+/// IP family if any. `None` on resolve failure, timeout, or connect error.
 pub async fn tcp_ping_once(host: &str, port: u16) -> Option<f64> {
-    tcp_connect_ms((host, port)).await
+    let addr = tokio::net::lookup_host((host, port))
+        .await
+        .ok()?
+        .find(family_ok)?;
+    tcp_connect_ms(addr).await
 }
 
 /// Times one TCP connect to `addr`, with a 3 second timeout.
-async fn tcp_connect_ms<A: tokio::net::ToSocketAddrs>(addr: A) -> Option<f64> {
+async fn tcp_connect_ms(addr: SocketAddr) -> Option<f64> {
     let start = Instant::now();
     match tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(addr)).await {
         Ok(Ok(_)) => {
@@ -199,7 +207,25 @@ pub struct Transfer {
     pub warmup_bytes: u64,
     /// Length of the measurement window in seconds; shorter than requested after a stable stop.
     pub elapsed_s: f64,
+    /// TCP connect times (ms) to the probe address, taken during the window.
+    pub loaded_ms: Vec<f64>,
 }
+
+/// How a download or upload measurement runs.
+pub struct Window {
+    /// Longest the measurement may run, in seconds.
+    pub duration_s: f64,
+    /// End early once the running average speed settles.
+    pub stable_stop: bool,
+    /// End once warm-up plus measured bytes reach this many bytes.
+    pub max_bytes: Option<u64>,
+    /// Address pinged every 200 ms during the window, for latency under load.
+    pub probe: Option<SocketAddr>,
+}
+
+/// The data cap is checked only after this many seconds, so a tiny window
+/// cannot turn a few bytes into an absurd speed.
+const CAP_MIN_S: f64 = 1.0;
 
 /// A stable stop never ends a measurement before this many seconds.
 const STABLE_MIN_S: f64 = 8.0;
@@ -220,15 +246,14 @@ fn is_stable(avgs: &[f64]) -> bool {
 }
 
 /// Runs the warm-up and measurement window shared by download and upload,
-/// then signals `stop`. With `stable_stop`, the window ends early once the
-/// running average speed stops changing.
+/// then signals `stop`. The window ends at `w.duration_s`, or earlier on a
+/// stable stop or when `w.max_bytes` is used up.
 async fn measure_window(
     total_bytes: &AtomicU64,
     warmup_bytes: &AtomicU64,
     measure_start: &AtomicU64,
     stop: &AtomicBool,
-    duration_s: f64,
-    stable_stop: bool,
+    w: &Window,
     on_progress: Option<ProgressCallback>,
 ) -> Transfer {
     tokio::time::sleep(std::time::Duration::from_secs_f64(1.5)).await;
@@ -237,7 +262,21 @@ async fn measure_window(
     let start_instant = Instant::now();
     measure_start.store(1, Ordering::Relaxed);
 
-    let end_at = start_instant + std::time::Duration::from_secs_f64(duration_s);
+    // Latency under load: ping while the transfer saturates the link.
+    let loaded = Arc::new(Mutex::new(Vec::new()));
+    let sampler = w.probe.map(|addr| {
+        let loaded = loaded.clone();
+        task::spawn(async move {
+            loop {
+                if let Some(ms) = tcp_connect_ms(addr).await {
+                    loaded.lock().unwrap_or_else(|e| e.into_inner()).push(ms);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        })
+    });
+
+    let end_at = start_instant + std::time::Duration::from_secs_f64(w.duration_s);
     let mut avgs = Vec::new();
 
     while Instant::now() < end_at {
@@ -246,7 +285,12 @@ async fn measure_window(
         if let Some(ref cb) = on_progress {
             cb(bytes, elapsed);
         }
-        if stable_stop && elapsed >= (avgs.len() + 1) as f64 {
+        if let Some(max) = w.max_bytes {
+            if elapsed >= CAP_MIN_S && bytes + warmup_bytes.load(Ordering::Relaxed) >= max {
+                break;
+            }
+        }
+        if w.stable_stop && elapsed >= (avgs.len() + 1) as f64 {
             avgs.push(util::bytes_to_mbps(bytes, elapsed));
             if elapsed >= STABLE_MIN_S && is_stable(&avgs) {
                 break;
@@ -256,10 +300,15 @@ async fn measure_window(
     }
 
     stop.store(true, Ordering::Relaxed);
+    // Abort rather than await: a connect stuck under load could hold us 3s.
+    if let Some(h) = sampler {
+        h.abort();
+    }
 
     let elapsed = start_instant.elapsed().as_secs_f64();
     let bytes = total_bytes.load(Ordering::Relaxed);
     let warmup_bytes = warmup_bytes.load(Ordering::Relaxed);
+    let loaded_ms = std::mem::take(&mut *loaded.lock().unwrap_or_else(|e| e.into_inner()));
 
     if elapsed <= 0.0 || bytes == 0 {
         return Transfer {
@@ -267,6 +316,7 @@ async fn measure_window(
             bytes: 0,
             warmup_bytes,
             elapsed_s: elapsed,
+            loaded_ms,
         };
     }
 
@@ -275,6 +325,7 @@ async fn measure_window(
         bytes,
         warmup_bytes,
         elapsed_s: elapsed,
+        loaded_ms,
     }
 }
 
@@ -285,13 +336,13 @@ async fn measure_window(
 /// # Parameters
 ///
 /// - `url_template`: URL template containing `"{bytes}"` to be substituted before requests.
-/// - `duration_s`: Measurement duration in seconds.
 /// - `streams`: Number of concurrent download streams to run.
+/// - `w`: duration, stable stop, data cap, and latency probe.
 /// - `on_progress`: Optional callback invoked periodically as `cb(total_bytes, elapsed_secs)`.
 ///
 /// # Returns
 ///
-/// A [`Transfer`]. With `stable_stop`, the window can end before `duration_s` once the speed settles.
+/// A [`Transfer`]. The window can end before `w.duration_s`; see [`Window`].
 ///
 /// # Examples
 ///
@@ -305,22 +356,22 @@ async fn measure_window(
 /// async fn example_download() {
 ///     // Use Cloudflare speed test template as an example.
 ///     let template = "https://speed.cloudflare.com/__down?bytes={bytes}";
-///     let t = download(template, 1.0, 1, false, None).await;
+///     let w = Window { duration_s: 1.0, stable_stop: false, max_bytes: None, probe: None };
+///     let t = download(template, 1, &w, None).await;
 ///     assert!(t.mbps >= 0.0);
 /// }
 /// ```
 pub async fn download(
     url_template: &str,
-    duration_s: f64,
     streams: usize,
-    stable_stop: bool,
+    w: &Window,
     on_progress: Option<ProgressCallback>,
 ) -> Transfer {
     let url = url_template.replace("{bytes}", "1000000000");
     // The client timeout covers the whole response body, so it must outlast
     // the warmup plus the measurement window. A fixed 30s killed every stream
     // mid-test for --duration above ~28s.
-    let client = build_speed_client(duration_s.ceil() as u64 + 10);
+    let client = build_speed_client(w.duration_s.ceil() as u64 + 10);
 
     let stop = Arc::new(AtomicBool::new(false));
     let total_bytes = Arc::new(AtomicU64::new(0));
@@ -385,8 +436,7 @@ pub async fn download(
         &warmup_bytes,
         &measure_start,
         &stop,
-        duration_s,
-        stable_stop,
+        w,
         on_progress,
     )
     .await;
@@ -409,7 +459,7 @@ pub async fn download(
 /// - `on_progress`: optional callback invoked periodically with `(bytes_uploaded, elapsed_seconds)`.
 ///
 /// # Returns
-/// A [`Transfer`]. With `stable_stop`, the window can end before `duration_s` once the speed settles.
+/// A [`Transfer`]. The window can end before `w.duration_s`; see [`Window`].
 ///
 /// # Examples
 ///
@@ -417,15 +467,15 @@ pub async fn download(
 /// # use std::sync::Arc;
 /// # use tokio;
 /// # async fn _run() {
-/// let t = crate::tester::upload("https://speed.cloudflare.com/__up", 1.0, 2, false, None).await;
+/// let w = crate::tester::Window { duration_s: 1.0, stable_stop: false, max_bytes: None, probe: None };
+/// let t = crate::tester::upload("https://speed.cloudflare.com/__up", 2, &w, None).await;
 /// assert!(t.mbps >= 0.0);
 /// # }
 /// ```
 pub async fn upload(
     url: &str,
-    duration_s: f64,
     streams: usize,
-    stable_stop: bool,
+    w: &Window,
     on_progress: Option<ProgressCallback>,
 ) -> Transfer {
     let data: Arc<Vec<u8>> = Arc::new(
@@ -447,6 +497,7 @@ pub async fn upload(
                 bytes: 0,
                 warmup_bytes: 0,
                 elapsed_s: 0.0,
+                loaded_ms: Vec::new(),
             }
         }
     }
@@ -545,8 +596,7 @@ pub async fn upload(
         &warmup_bytes,
         &measure_start,
         &stop,
-        duration_s,
-        stable_stop,
+        w,
         on_progress,
     )
     .await;

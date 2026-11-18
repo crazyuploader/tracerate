@@ -1,25 +1,17 @@
-use futures::StreamExt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::task;
-
-use crate::tester;
 use crate::util;
 
 #[derive(serde::Serialize)]
 pub struct BufferbloatResult {
     pub idle_ms: f64,
+    /// p90 latency across both directions under load.
     pub loaded_ms: f64,
     pub delta_ms: f64,
     pub grade: String,
-    pub data_used_mb: f64,
+    /// p90 latency while downloading; `None` when no sample was taken.
+    pub download_loaded_ms: Option<f64>,
+    /// p90 latency while uploading; `None` when upload was skipped or no sample was taken.
+    pub upload_loaded_ms: Option<f64>,
 }
-
-/// Cap on parallel saturation streams. Beyond this the probe itself starts
-/// competing for upstream bandwidth on slow links and skews the measurement;
-/// keeps the probe lighter than the main download test.
-const MAX_SATURATION_STREAMS: usize = 6;
 
 /// Nearest-rank percentile of a sample list. `pct` is clamped to [0, 100]:
 /// p0 returns the min, p100 the max. Returns 0.0 for an empty list so
@@ -58,136 +50,36 @@ fn grade(delta: f64) -> &'static str {
     }
 }
 
-/// Measures TCP ping latency before and during concurrent download saturation and produces a `BufferbloatResult` summarizing idle and loaded latencies, their difference, a grade, and data transferred.
+/// Grades bufferbloat from latency samples taken during the speed tests.
 ///
-/// The function samples up to eight TCP pings to establish an idle baseline, then spawns `streams` concurrent download workers to saturate the link for the specified `duration` (in seconds) while sampling TCP ping latency under load. If no idle samples are obtained, the function returns a result with all numeric fields set to `0.0` and `grade` set to `"?"`. If no loaded samples are collected during the saturation window, the returned result contains the rounded idle latency and rounded data usage while `loaded_ms`, `delta_ms` are `0.0` and `grade` is `"?"`.
+/// `idle_ms` is the best idle RTT (the minimum, so queueing noise stays out of
+/// the baseline). Loaded latency is the p90 of the samples: robust to a couple
+/// of lucky connects, still the latency a user feels under load. Returns
+/// `None` without an idle baseline or any loaded sample.
 ///
-/// # Examples
-///
-/// ```
-/// # use tokio_test::block_on;
-/// # async fn run_example() {
-/// let result = super::measure_bufferbloat(3.0, 2).await;
-/// // basic invariant checks
-/// assert!(result.idle_ms >= 0.0);
-/// assert!(result.loaded_ms >= 0.0);
-/// assert!(result.delta_ms >= 0.0);
-/// assert!(result.data_used_mb >= 0.0);
-/// # }
-/// # block_on(run_example());
-/// ```
-pub async fn measure_bufferbloat(duration: f64, streams: usize) -> BufferbloatResult {
-    // Clamp streams so the probe itself can't become the bottleneck.
-    let streams = streams.clamp(1, MAX_SATURATION_STREAMS);
-
-    // Idle baseline: 8 concurrent TCP pings before any load
-    let idle_samples: Vec<f64> = futures::future::join_all(
-        (0..8).map(|_| tester::tcp_ping_once(tester::SERVER.host, tester::SERVER.port)),
-    )
-    .await
-    .into_iter()
-    .flatten()
-    .collect();
-
-    if idle_samples.is_empty() {
-        return BufferbloatResult {
-            idle_ms: 0.0,
-            loaded_ms: 0.0,
-            delta_ms: 0.0,
-            grade: "?".to_string(),
-            data_used_mb: 0.0,
-        };
+/// TCP-connect sampling has a known limit: a lost SYN is retransmitted by the
+/// kernel after >=1s, so packet loss shows up as inflated latency.
+pub fn from_samples(
+    idle_ms: Option<f64>,
+    download: &[f64],
+    upload: &[f64],
+) -> Option<BufferbloatResult> {
+    let idle = idle_ms?;
+    let all: Vec<f64> = download.iter().chain(upload).copied().collect();
+    if all.is_empty() {
+        return None;
     }
-
-    // Best idle RTT is the baseline; the average would bake queueing noise
-    // into the reference point.
-    let idle = idle_samples.iter().cloned().fold(f64::MAX, f64::min);
-
-    // Saturate with multiple concurrent download streams
-    let url = tester::SERVER.download_url.replace("{bytes}", "200000000");
-    let stop = Arc::new(AtomicBool::new(false));
-    let total_bytes = Arc::new(AtomicU64::new(0));
-    let mut saturate_handles = Vec::new();
-
-    let client = Arc::new(tester::build_speed_client(60));
-
-    for _ in 0..streams {
-        let stop_clone = stop.clone();
-        let url_clone = url.clone();
-        let bytes_clone = total_bytes.clone();
-        let client = client.clone();
-
-        let handle = task::spawn(async move {
-            loop {
-                if stop_clone.load(Ordering::Relaxed) {
-                    break;
-                }
-
-                let response = match client.get(&url_clone).send().await {
-                    Ok(r) => r,
-                    Err(_) => break,
-                };
-
-                let mut stream = response.bytes_stream();
-                while let Some(chunk) = stream.next().await {
-                    if stop_clone.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    if let Ok(c) = chunk {
-                        bytes_clone.fetch_add(c.len() as u64, Ordering::Relaxed);
-                    }
-                }
-            }
-        });
-
-        saturate_handles.push(handle);
-    }
-
-    // Short warmup so streams ramp past TCP slow-start before we sample.
-    tokio::time::sleep(std::time::Duration::from_secs_f64(0.3)).await;
-
-    // TCP-connect sampling under load has a known limitation: a lost SYN is
-    // silently retransmitted by the kernel (after >=1s), so packet loss shows
-    // up as inflated latency rather than a missed sample.
-    let mut samples = Vec::new();
-    let end_time = Instant::now() + std::time::Duration::from_secs_f64(duration);
-
-    while Instant::now() < end_time {
-        if let Some(ms) = tester::tcp_ping_once(tester::SERVER.host, tester::SERVER.port).await {
-            samples.push(ms);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-
-    stop.store(true, Ordering::Relaxed);
-    for handle in saturate_handles {
-        let _ = handle.await;
-    }
-
-    let data_used_mb = total_bytes.load(Ordering::Relaxed) as f64 / (1024.0 * 1024.0);
-
-    if samples.is_empty() {
-        return BufferbloatResult {
-            idle_ms: util::round2(idle),
-            loaded_ms: 0.0,
-            delta_ms: 0.0,
-            grade: "?".to_string(),
-            data_used_mb: util::round2(data_used_mb),
-        };
-    }
-
-    // p90 of loaded samples: robust to a couple of lucky connects, still
-    // reflects the latency a user actually feels under load.
-    let loaded = percentile(&samples, 90.0);
+    let p90 = |s: &[f64]| (!s.is_empty()).then(|| util::round2(percentile(s, 90.0)));
+    let loaded = percentile(&all, 90.0);
     let delta = (loaded - idle).max(0.0);
-
-    BufferbloatResult {
+    Some(BufferbloatResult {
         idle_ms: util::round2(idle),
         loaded_ms: util::round2(loaded),
         delta_ms: util::round2(delta),
         grade: grade(delta).to_string(),
-        data_used_mb: util::round2(data_used_mb),
-    }
+        download_loaded_ms: p90(download),
+        upload_loaded_ms: p90(upload),
+    })
 }
 
 #[cfg(test)]
@@ -234,6 +126,24 @@ mod tests {
         let samples = [5.0, 1.0, 3.0];
         percentile(&samples, 50.0);
         assert_eq!(samples, [5.0, 1.0, 3.0]);
+    }
+
+    // --- from_samples ---
+
+    #[test]
+    fn from_samples_needs_idle_and_loaded() {
+        assert!(from_samples(None, &[50.0], &[]).is_none());
+        assert!(from_samples(Some(20.0), &[], &[]).is_none());
+    }
+
+    #[test]
+    fn from_samples_grades_delta_and_splits_directions() {
+        let r = from_samples(Some(20.0), &[60.0; 10], &[]).unwrap();
+        assert_eq!(r.loaded_ms, 60.0);
+        assert_eq!(r.delta_ms, 40.0);
+        assert_eq!(r.grade, "B");
+        assert_eq!(r.download_loaded_ms, Some(60.0));
+        assert_eq!(r.upload_loaded_ms, None);
     }
 
     // --- grade boundaries ---

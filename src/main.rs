@@ -18,7 +18,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = false,
-        help = "Skip upload, bufferbloat, and regional latency tests"
+        help = "Skip upload and regional latency tests"
     )]
     quick: bool,
 
@@ -56,7 +56,7 @@ struct Cli {
         long,
         default_value = tester::SERVER.download_url,
         value_parser = parse_download_url,
-        help = "Download URL; must contain {bytes}. Also sets the ping/DNS host (bufferbloat still uses Cloudflare)"
+        help = "Download URL; must contain {bytes}. Also sets the ping, DNS, and latency-under-load host"
     )]
     download_url: String,
 
@@ -75,9 +75,41 @@ struct Cli {
         short,
         long,
         default_value_t = false,
-        help = "Show extra detail: server IP, streams, ping range, test durations, bufferbloat data"
+        help = "Show extra detail: server IP, streams, ping range, test durations"
     )]
     verbose: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Always run the full --duration; turn off stopping once the speed is stable"
+    )]
+    fixed_duration: bool,
+
+    #[arg(
+        long,
+        value_name = "MB",
+        value_parser = parse_max_data,
+        help = "Stop the speed tests once about this many MB are used (split between download and upload)"
+    )]
+    max_data: Option<f64>,
+
+    #[arg(short = '4', long, conflicts_with = "ipv6", help = "Use IPv4 only")]
+    ipv4: bool,
+
+    #[arg(short = '6', long, help = "Use IPv6 only")]
+    ipv6: bool,
+}
+
+/// Exit code when the run finished but the verdict found a problem. Not 2:
+/// clap already exits 2 on bad arguments.
+const EXIT_PROBLEM: i32 = 3;
+
+fn parse_max_data(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(v) if v >= 1.0 && v.is_finite() => Ok(v),
+        _ => Err("must be a number of MB, at least 1".into()),
+    }
 }
 
 fn parse_duration(s: &str) -> Result<f64, String> {
@@ -284,6 +316,16 @@ async fn main() {
     #[cfg(windows)]
     colored::control::set_virtual_terminal(true).ok();
 
+    // Before any client is built: every client and ping reads this.
+    if cli.ipv4 || cli.ipv6 {
+        let family = if cli.ipv4 {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        } else {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+        };
+        let _ = tester::IP_FAMILY.set(family);
+    }
+
     if cli.quick && cli.combined {
         eprintln!(
             "error: --combined cannot be used with --quick (upload is skipped in quick mode)"
@@ -293,7 +335,7 @@ async fn main() {
 
     let duration_s = cli.duration.unwrap_or(if cli.quick { 10.0 } else { 30.0 });
     let test_upload = !cli.quick;
-    let test_extras = !cli.quick;
+    let test_regions = !cli.quick;
     let test_combined = cli.combined;
     let quiet = cli.output == "json";
     // Same check indicatif uses to decide whether bars are drawn.
@@ -336,9 +378,19 @@ async fn main() {
         }
     };
 
+    // Data cap in bytes, shared between the speed tests (bytes_to_mb uses MiB).
+    let max_bytes = cli.max_data.map(|mb| (mb * 1_048_576.0) as u64);
+    let window = |stable_stop: bool, max_bytes: Option<u64>| tester::Window {
+        duration_s,
+        stable_stop: stable_stop && !cli.fixed_duration,
+        max_bytes,
+        probe: ping.ip.map(|ip| std::net::SocketAddr::new(ip, server_port)),
+    };
+
     // Stable stop is off for --combined: one direction ending early would
     // leave the other measured without the load the mode exists for.
     let (download, upload) = if test_combined {
+        let w = window(false, max_bytes.map(|m| m / 2));
         let pb = new_bar("  Combined    —");
         // Download callback drives the bar with dl+ul bytes; upload callback only shares its count.
         let ul_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -347,9 +399,8 @@ async fn main() {
         let (dl, ul) = tokio::join!(
             tester::download(
                 &cli.download_url,
-                duration_s,
                 cli.streams,
-                false,
+                &w,
                 Some(Box::new(move |b, e| cb(
                     b + ul_for_dl.load(std::sync::atomic::Ordering::Relaxed),
                     e
@@ -357,9 +408,8 @@ async fn main() {
             ),
             tester::upload(
                 &cli.upload_url,
-                duration_s,
                 cli.streams,
-                false,
+                &w,
                 Some(Box::new(move |b, _| {
                     ul_bytes.store(b, std::sync::atomic::Ordering::Relaxed)
                 })),
@@ -372,16 +422,22 @@ async fn main() {
                 bytes: dl.bytes + ul.bytes,
                 warmup_bytes: 0,
                 elapsed_s: dl.elapsed_s,
+                loaded_ms: Vec::new(),
             },
         );
         (dl, Some(ul))
     } else {
         let pb = new_bar("  Downloading —");
+        // Half the cap for download when upload follows; upload gets what is left.
+        let dl_cap = if test_upload {
+            max_bytes.map(|m| m / 2)
+        } else {
+            max_bytes
+        };
         let dl = tester::download(
             &cli.download_url,
-            duration_s,
             cli.streams,
-            true,
+            &window(true, dl_cap),
             Some(speed_progress_cb(pb.clone(), duration_s)),
         )
         .await;
@@ -389,11 +445,11 @@ async fn main() {
 
         let ul = if test_upload {
             let pb = new_bar("  Uploading   —");
+            let ul_cap = max_bytes.map(|m| m.saturating_sub(dl.bytes + dl.warmup_bytes));
             let ul = tester::upload(
                 &cli.upload_url,
-                duration_s,
                 cli.streams,
-                true,
+                &window(true, ul_cap),
                 Some(speed_progress_cb(pb.clone(), duration_s)),
             )
             .await;
@@ -420,14 +476,14 @@ async fn main() {
         indicatif::ProgressBar::hidden()
     };
 
-    let bufferbloat = if test_extras {
-        spinner.set_message("Probing bufferbloat (saturating link)...");
-        Some(bufferbloat::measure_bufferbloat(5.0, 4).await)
-    } else {
-        None
-    };
+    // Graded from pings taken during the speed tests; no extra data used.
+    let bufferbloat = bufferbloat::from_samples(
+        ping.low_ms,
+        &download.loaded_ms,
+        upload.as_ref().map_or(&[][..], |u| &u.loaded_ms),
+    );
 
-    let regions = if test_extras {
+    let regions = if test_regions {
         spinner.set_message("Pinging regional servers...");
         Some(regional::ping_regions().await)
     } else {
@@ -437,8 +493,7 @@ async fn main() {
     let upload_mbps = upload.as_ref().map(|u| u.mbps);
     let combined_bytes =
         test_combined.then(|| download.bytes + upload.as_ref().map_or(0, |u| u.bytes));
-    let total_data_mb =
-        util::bytes_to_mb(speed_bytes) + bufferbloat.as_ref().map_or(0.0, |b| b.data_used_mb);
+    let total_data_mb = util::bytes_to_mb(speed_bytes);
 
     let result = serde_json::json!({
         "name": tester::SERVER.name,
@@ -462,6 +517,8 @@ async fn main() {
         "combined_bytes": combined_bytes,
         "warmup_bytes": download.warmup_bytes + upload.as_ref().map_or(0, |u| u.warmup_bytes),
         "total_data_mb": util::round1(total_data_mb),
+        "max_data_mb": cli.max_data,
+        "ip_family": if cli.ipv4 { Some("ipv4") } else if cli.ipv6 { Some("ipv6") } else { None },
         "error": null,
     });
 
@@ -472,8 +529,14 @@ async fn main() {
     let started_at = test_start.format("%Y-%m-%d %H:%M:%S").to_string();
     let test_duration = test_start_instant.elapsed().as_secs_f64().round() as u64;
 
-    // Total failure (no download data at all) exits non-zero so scripts/cron can tell.
-    let failed = download_mbps <= 0.0;
+    // Exit 1: no download data at all. Exit 3: finished, but the verdict found a problem.
+    let exit_code = if download_mbps <= 0.0 {
+        1
+    } else if summary.status == "problem" {
+        EXIT_PROBLEM
+    } else {
+        0
+    };
 
     if cli.output == "json" {
         let output = serde_json::json!({
@@ -493,10 +556,7 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        if failed {
-            std::process::exit(1);
-        }
-        return;
+        std::process::exit(exit_code);
     }
 
     // shortcut: below ~40 columns the prefix and bar alone wrap, leaving fragments; fine for real terminals.
@@ -516,9 +576,7 @@ async fn main() {
         test_duration,
     );
 
-    if failed {
-        std::process::exit(1);
-    }
+    std::process::exit(exit_code);
 }
 
 #[cfg(test)]

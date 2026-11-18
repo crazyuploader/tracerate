@@ -20,18 +20,21 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 
 | Command                        | Description                                                                                                  |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `tracerate`                    | Full test (download, upload, bufferbloat, regional latency)                                                  |
-| `tracerate --quick`            | Fast test (10s download only, skips upload and extras)                                                       |
-| `tracerate --combined`         | Run download and upload simultaneously instead of one after the other                                       |
+| `tracerate`                    | Full test (download, upload, latency under load, regional latency)                                           |
+| `tracerate --quick`            | Fast test (10s download only, skips upload and regional latency)                                             |
+| `tracerate --combined`         | Run download and upload simultaneously instead of one after the other                                        |
 | `tracerate --duration 30`      | Max download/upload duration in seconds, 1-300; stops early once speed is stable (default: 30)               |
 | `tracerate --streams 8`        | Parallel streams for download/upload, 1-32 (default: 16)                                                     |
 | `tracerate --output json`      | Machine-readable JSON output                                                                                 |
-| `tracerate --verbose`          | Verbose output: server IP, streams, ping low/high, test durations, bufferbloat data                         |
-| `tracerate --download-url URL` | Custom download URL (must contain `{bytes}`); also sets the ping/DNS host. Bufferbloat still uses Cloudflare |
+| `tracerate --verbose`          | Verbose output: server IP, streams, ping low/high, test durations                                            |
+| `tracerate --fixed-duration`   | Always run the full --duration (no early stop once speed is stable)                                          |
+| `tracerate --max-data 50`      | Stop speed tests after about 50 MB, for metered connections                                                  |
+| `tracerate -4` / `-6`          | Use IPv4 only / IPv6 only                                                                                    |
+| `tracerate --download-url URL` | Custom download URL (must contain `{bytes}`); also sets the ping, DNS and latency-under-load host            |
 | `tracerate --upload-url URL`   | Custom upload (POST) URL                                                                                     |
 | `tracerate --no-color`         | Disable colored output (`NO_COLOR` is also respected)                                                        |
 
-Exit codes: `0` on success, `1` if the download measured nothing or arguments are invalid, `130` on Ctrl-C.
+Exit codes: `0` on success, `1` if the download measured nothing, `2` on invalid arguments, `3` if the test finished but found a problem (packet loss, severe bufferbloat, high latency or jitter), `130` on Ctrl-C.
 
 ## Install
 

@@ -69,7 +69,7 @@ pub fn render(
     render_speed(r, verbose);
 
     if let Some(bb) = bb {
-        render_bufferbloat(bb, verbose);
+        render_bufferbloat(bb);
     }
 
     if let Some(regions) = regions {
@@ -299,13 +299,13 @@ fn render_speed(r: &serde_json::Value, verbose: bool) {
             "  {}   {}   {}",
             format!("{:<8}", "Total").dimmed(),
             format!("{:.1} MB", mb).bold().cyan(),
-            "incl. warm-up and bufferbloat".dimmed()
+            "incl. warm-up".dimmed()
         );
     }
     println!();
 }
 
-fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult, verbose: bool) {
+fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult) {
     section("Bufferbloat");
 
     let grade_color = match bb.grade.as_str() {
@@ -338,11 +338,28 @@ fn render_bufferbloat(bb: &crate::bufferbloat::BufferbloatResult, verbose: bool)
         "Grade".dimmed(),
         grade_str
     );
-    if verbose {
+    // Per-direction p90 under load, like Ookla's per-stage loaded latency.
+    let dir = |arrow: &str, v: Option<f64>| {
+        v.map(|ms| {
+            format!(
+                "{} {}",
+                arrow.dimmed(),
+                format!("{:.2} ms", ms).bold().cyan()
+            )
+        })
+    };
+    let dirs: Vec<String> = [
+        dir("↓", bb.download_loaded_ms),
+        dir("↑", bb.upload_loaded_ms),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !dirs.is_empty() {
         println!(
-            "  {}   {:.1} MB used",
-            format!("{:<6}", "Data").dimmed(),
-            bb.data_used_mb
+            "  {}   {}",
+            format!("{:<6}", "Under").dimmed(),
+            dirs.join("   ")
         );
     }
     println!();

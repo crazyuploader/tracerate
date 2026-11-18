@@ -183,7 +183,8 @@ mod tests {
             loaded_ms: 10.0 + delta_ms,
             delta_ms,
             grade: grade.to_string(),
-            data_used_mb: 5.0,
+            download_loaded_ms: None,
+            upload_loaded_ms: None,
         }
     }
 
@@ -516,7 +517,10 @@ mod tests {
         // All fields absent → download=0 → nothing measured, reported as a failure
         let r = json!({});
         let v = analyze(&r, None);
-        assert_eq!(v.summary, "Download failed, could not reach the test server.");
+        assert_eq!(
+            v.summary,
+            "Download failed, could not reach the test server."
+        );
     }
 
     #[test]
