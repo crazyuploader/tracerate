@@ -124,10 +124,8 @@ pub async fn ping_regions() -> Vec<RegionResult> {
 
         let handle = task::spawn(async move {
             // Under -4/-6, a host without an address of that family is skipped, not a timeout.
-            if !tester::has_family_addr(host, 443).await {
-                return None;
-            }
-            let ms = tcp_ping(host, 443, 3).await;
+            let addr = tester::resolve_family(host, 443).await?;
+            let ms = tcp_ping(addr, 3).await;
             Some((code, city, host, ms))
         });
 
@@ -150,22 +148,14 @@ pub async fn ping_regions() -> Vec<RegionResult> {
     results
 }
 
-/// Measure TCP connection latency to a host over multiple attempts and return the best result.
+/// Measure TCP connection latency to an address over multiple attempts and return the best result.
 ///
 /// Returns the minimum successful TCP connection time in milliseconds, rounded to two decimal places; returns `None` if no attempts succeeded.
-///
-/// # Examples
-///
-/// ```
-/// let rt = tokio::runtime::Runtime::new().unwrap();
-/// let ms = rt.block_on(tcp_ping("example.com", 443, 1));
-/// assert!(ms.is_none_or(|m| m >= 0.0));
-/// ```
-async fn tcp_ping(host: &str, port: u16, attempts: usize) -> Option<f64> {
+async fn tcp_ping(addr: std::net::SocketAddr, attempts: usize) -> Option<f64> {
     let mut samples = Vec::new();
 
     for _ in 0..attempts {
-        if let Some(ms) = tester::tcp_ping_once(host, port).await {
+        if let Some(ms) = tester::tcp_connect_ms(addr).await {
             samples.push(ms);
         }
     }

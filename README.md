@@ -28,7 +28,7 @@ A no-nonsense CLI internet speed tester, written in Rust. Ported from [tracerate
 | `tracerate --output json`      | Machine-readable JSON output                                                                                 |
 | `tracerate --verbose`          | Verbose output: server IP, streams, ping low/high, test durations                                            |
 | `tracerate --fixed-duration`   | Always run the full --duration (no early stop once speed is stable)                                          |
-| `tracerate --max-data 50`      | Stop speed tests after about 50 MB, for metered connections                                                  |
+| `tracerate --max-data 50`      | Stop speed tests after about 50 MB, for metered connections (uses at most 4 streams)                         |
 | `tracerate -4` / `-6`          | Use IPv4 only / IPv6 only                                                                                    |
 | `tracerate --download-url URL` | Custom download URL (must contain `{bytes}`); also sets the ping, DNS and latency-under-load host            |
 | `tracerate --upload-url URL`   | Custom upload (POST) URL                                                                                     |

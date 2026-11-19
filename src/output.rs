@@ -391,7 +391,11 @@ fn render_regions(regions: &[RegionResult]) {
     if skipped > 0 {
         println!(
             "  {}",
-            format!("{skipped} regions skipped: no address in the chosen IP family").dimmed()
+            format!(
+                "{skipped} region{} skipped: no address in the chosen IP family",
+                if skipped == 1 { "" } else { "s" }
+            )
+            .dimmed()
         );
     }
 
